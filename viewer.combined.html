@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LiveKit Viewer + PiCarX Control (MQTT)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        background: #0b0b0b;
+        color: #eee;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
+          Arial, sans-serif;
+      }
+      header,
+      footer {
+        padding: 12px 16px;
+        border-bottom: 1px solid #222;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      footer {
+        border-top: 1px solid #222;
+        border-bottom: none;
+        font-size: 12px;
+        opacity: 0.85;
+      }
+      code {
+        background: #1b1b1b;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      button,
+      input,
+      select {
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #333;
+        background: #171717;
+        color: #eee;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .grow {
+        flex: 1 1 auto;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .wrap {
+        padding: 12px 16px;
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(240px, 340px) 1fr;
+      }
+      #videos {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      video {
+        width: min(480px, 100%);
+        background: #000;
+        border-radius: 10px;
+        outline: 1px solid #222;
+      }
+      #err {
+        color: #ff8a8a;
+        padding: 8px 16px;
+        display: none;
+      }
+      .card {
+        background: #0f0f0f;
+        border: 1px solid #222;
+        border-radius: 12px;
+        padding: 12px;
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .kbd {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: #151515;
+        padding: 2px 6px;
+        border-radius: 6px;
+        border: 1px solid #333;
+      }
+      .slider {
+        width: 100%;
+      }
+      .small {
+        font-size: 12px;
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row">
+        <strong>Room:</strong> <code id="roomLabel">vr-demo</code>
+        <button id="join">Join</button>
+        <button id="leave" disabled>Leave</button>
+        <span id="status" class="small">idle</span>
+      </div>
+      <div class="grow"></div>
+      <div class="row">
+        <strong>MQTT</strong>
+        <label
+          >URL: <input id="mqttUrl" size="24" value="ws://3.112.216.187:9001"
+        /></label>
+        <label
+          >Topic base: <input id="topicBase" size="14" value="demo/picarx"
+        /></label>
+        <button id="mqttConnect">Connect</button>
+        <span id="mqttStatus" class="small">disconnected</span>
+      </div>
+    </header>
+
+    <div id="err"></div>
+
+    <div class="wrap">
+      <!-- Controls -->
+      <div class="card">
+        <h3 style="margin: 4px 0 8px">PiCarX 操作</h3>
+        <div class="small">
+          キーボードでも操作可：<span class="kbd">↑</span> 前進
+          <span class="kbd">↓</span> 後退 <span class="kbd">←</span> 左
+          <span class="kbd">→</span> 右 <span class="kbd">Space</span> 停止
+        </div>
+        <div class="grid2" style="margin-top: 10px">
+          <button data-cmd="move" data-dir="forward">↑ Forward</button>
+          <button data-cmd="move" data-dir="backward">↓ Backward</button>
+          <button data-cmd="move" data-dir="left">← Left</button>
+          <button data-cmd="move" data-dir="right">→ Right</button>
+          <button
+            id="stopBtn"
+            data-cmd="stop"
+            class="grid2"
+            style="grid-column: 1/-1; background: #2a1b1b; border-color: #553"
+          >
+            ■ Stop
+          </button>
+        </div>
+
+        <div style="margin-top: 14px">
+          速度
+          <input
+            id="speed"
+            class="slider"
+            type="range"
+            min="10"
+            max="100"
+            value="50"
+          />
+          <span id="speedVal">50</span>
+        </div>
+
+        <div style="margin-top: 14px">
+          カメラ パン/チルト
+          <div class="row">
+            Pan
+            <input
+              id="pan"
+              class="slider"
+              type="range"
+              min="-90"
+              max="90"
+              value="0"
+            />
+            Tilt
+            <input
+              id="tilt"
+              class="slider"
+              type="range"
+              min="-45"
+              max="45"
+              value="0"
+            />
+            <button id="center">Center</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Videos -->
+      <div>
+        <div id="videos"></div>
+        <audio id="remoteAudio" autoplay playsinline hidden></audio>
+      </div>
+    </div>
+
+    <footer>
+      トークンは一時的な視聴用
+      <code>Join</code> トークンを使用してください。MQTT は WebSocket
+      ブローカーに接続します。
+    </footer>
+
+    <!-- SDKs from CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/livekit-client/2.15.7/livekit-client.umd.js"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+    <script>
+      // ====== 設定（必要に応じて編集）======
+      const roomName = 'vr-demo';
+      const wsUrl = 'wss://relay.yuru-yuru.net';
+      // ★ここに視聴者Joinトークン（管理JWTではない）を貼り付け
+      const token =
+        'eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5TdWJzY3JpYmUiOnRydWUsImNhblB1Ymxpc2giOmZhbHNlLCJjYW5QdWJsaXNoRGF0YSI6ZmFsc2V9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY2MDk2NTQ1LCJuYmYiOjAsInN1YiI6InZpZXdlci0zZDh2OTMifQ.epdrv0CftHMpIvBRdSH4gs4PuARYcA9NlqQ7Bh8uyHU';
+      // =====================================
+
+      const videos = document.getElementById('videos');
+      const joinBtn = document.getElementById('join');
+      const leaveBtn = document.getElementById('leave');
+      const statusEl = document.getElementById('status');
+      const errEl = document.getElementById('err');
+      const audioEl = document.getElementById('remoteAudio');
+
+      const mqttUrlEl = document.getElementById('mqttUrl');
+      const topicBaseEl = document.getElementById('topicBase');
+      const mqttStatusEl = document.getElementById('mqttStatus');
+      const mqttBtn = document.getElementById('mqttConnect');
+
+      const speedEl = document.getElementById('speed');
+      const speedVal = document.getElementById('speedVal');
+      const panEl = document.getElementById('pan');
+      const tiltEl = document.getElementById('tilt');
+
+      let room;
+      let mqttClient;
+
+      function setStatus(s) {
+        statusEl.textContent = s;
+      }
+      function showErr(e) {
+        errEl.style.display = 'block';
+        errEl.textContent = e && e.message ? e.message : String(e);
+        console.error(e);
+      }
+
+      function attachTrack(pub) {
+        if (pub.isSubscribed && pub.track) {
+          const track = pub.track;
+          if (track.kind === 'video') {
+            const el = track.attach();
+            el.playsInline = true;
+            videos.appendChild(el);
+            el.play?.().catch(() => {});
+          } else if (track.kind === 'audio') {
+            try {
+              track.attach(audioEl);
+              audioEl.muted = false;
+              audioEl.play?.().catch(() => {});
+            } catch (e) {
+              console.warn(e);
+            }
+          }
+        }
+      }
+
+      async function join() {
+        try {
+          try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) {
+              const ac = new AC();
+              if (ac.state !== 'running') await ac.resume();
+            }
+          } catch {}
+
+          errEl.style.display = 'none';
+          setStatus('connecting…');
+          joinBtn.disabled = true;
+
+          if (!token || token === 'TOKEN_HERE') {
+            throw new Error(
+              '視聴者トークンが未設定です。token に Join トークンを貼ってください。'
+            );
+          }
+
+          room = new LivekitClient.Room({
+            adaptiveStream: true,
+            dynacast: true,
+          });
+          window.lkRoom = room;
+
+          room.on(LivekitClient.RoomEvent.TrackSubscribed, (_track, pub, _p) =>
+            attachTrack(pub)
+          );
+          room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) =>
+            p.trackPublications.forEach(attachTrack)
+          );
+          room.on(LivekitClient.RoomEvent.Disconnected, () =>
+            setStatus('disconnected')
+          );
+
+          await room.connect(wsUrl, token);
+          setStatus('connected');
+          leaveBtn.disabled = false;
+        } catch (e) {
+          setStatus('error');
+          showErr(e);
+          joinBtn.disabled = false;
+        }
+      }
+
+      async function leave() {
+        try {
+          if (room) await room.disconnect();
+        } catch (e) {
+          console.warn(e);
+        }
+        videos.innerHTML = '';
+        setStatus('idle');
+        joinBtn.disabled = false;
+        leaveBtn.disabled = true;
+      }
+
+      joinBtn.addEventListener('click', join);
+      leaveBtn.addEventListener('click', leave);
+      document.getElementById('roomLabel').textContent = roomName;
+
+      // ===== MQTT =====
+      function mqttConnect() {
+        const url = mqttUrlEl.value.trim();
+        if (!/^wss?:\/\//.test(url)) {
+          alert('MQTT URL は ws:// か wss:// で指定してください');
+          return;
+        }
+        try {
+          if (mqttClient) {
+            mqttClient.end(true);
+            mqttClient = null;
+          }
+          mqttClient = mqtt.connect(url, {
+            keepalive: 30,
+            reconnectPeriod: 2000,
+          });
+          mqttClient.on(
+            'connect',
+            () => (mqttStatusEl.textContent = 'connected')
+          );
+          mqttClient.on(
+            'reconnect',
+            () => (mqttStatusEl.textContent = 'reconnecting…')
+          );
+          mqttClient.on(
+            'close',
+            () => (mqttStatusEl.textContent = 'disconnected')
+          );
+          mqttClient.on('error', (e) => console.warn('MQTT error', e));
+        } catch (e) {
+          showErr(e);
+        }
+      }
+      mqttBtn.addEventListener('click', mqttConnect);
+
+      function publish(subtopic, payload) {
+        if (!mqttClient || !mqttClient.connected) {
+          console.warn('MQTT not connected');
+          return;
+        }
+        const base = topicBaseEl.value.trim() || 'demo/picarx';
+        const topic = `${base}/${subtopic}`;
+        const msg = JSON.stringify(payload);
+        console.log('MQTT publish:', topic, msg);
+        mqttClient.publish(topic, msg, {
+          qos: 0,
+          retain: false,
+        });
+      }
+
+      // 走行コマンド送信 (throttle: -1..1, steer: -1..1)
+      function sendDrive(throttle, steer) {
+        publish('cmd', { throttle, steer });
+      }
+
+      // Buttons
+      document.querySelectorAll('[data-cmd="move"]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const dir = btn.getAttribute('data-dir');
+          const speed = Number(speedEl.value) / 100; // 0..1 に正規化
+          switch (dir) {
+            case 'forward':  sendDrive(speed, 0); break;
+            case 'backward': sendDrive(-speed, 0); break;
+            case 'left':     sendDrive(speed, -1); break;
+            case 'right':    sendDrive(speed, 1); break;
+          }
+        });
+      });
+      document
+        .getElementById('stopBtn')
+        .addEventListener('click', () => sendDrive(0, 0));
+
+      // Sliders
+      speedEl.addEventListener(
+        'input',
+        () => (speedVal.textContent = speedEl.value)
+      );
+      function sendPanTilt() {
+        publish('camera', {
+          pan: Number(panEl.value),
+          tilt: Number(tiltEl.value),
+        });
+      }
+      panEl.addEventListener('change', sendPanTilt);
+      tiltEl.addEventListener('change', sendPanTilt);
+      document.getElementById('center').addEventListener('click', () => {
+        panEl.value = 0;
+        tiltEl.value = 0;
+        sendPanTilt();
+      });
+
+      // Keyboard controls
+      window.addEventListener('keydown', (e) => {
+        const speed = Number(speedEl.value) / 100; // 0..1 に正規化
+        if (e.code === 'ArrowUp') {
+          sendDrive(speed, 0);
+          e.preventDefault();
+        }
+        if (e.code === 'ArrowDown') {
+          sendDrive(-speed, 0);
+          e.preventDefault();
+        }
+        if (e.code === 'ArrowLeft') {
+          sendDrive(speed, -1);
+          e.preventDefault();
+        }
+        if (e.code === 'ArrowRight') {
+          sendDrive(speed, 1);
+          e.preventDefault();
+        }
+        if (e.code === 'Space') {
+          sendDrive(0, 0);
+          e.preventDefault();
+        }
+      });
+    </script>
+  </body>
+</html>

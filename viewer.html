@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>LiveKit Viewer (Token Embedded)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        background: #0b0b0b;
+        color: #eee;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
+          Arial, sans-serif;
+      }
+      header {
+        padding: 12px 16px;
+        border-bottom: 1px solid #222;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      code {
+        background: #1b1b1b;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      button {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid #333;
+        background: #1a1a1a;
+        color: #eee;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #videos {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 12px;
+      }
+      video {
+        width: min(480px, 100%);
+        background: #000;
+        border-radius: 10px;
+        outline: 1px solid #222;
+      }
+      #status {
+        margin-left: auto;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+      #err {
+        color: #ff8a8a;
+        padding: 8px 16px;
+        display: none;
+      }
+      footer {
+        padding: 10px 16px;
+        border-top: 1px solid #222;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row">
+        <strong>Room:</strong> <code id="roomLabel">vr-demo</code>
+        <button id="join">Join</button>
+        <button id="leave" disabled>Leave</button>
+      </div>
+      <div id="status">idle</div>
+    </header>
+
+    <div id="err"></div>
+    <div id="videos"></div>
+
+    <footer>
+      このページは「視聴者トークンを直書き」する簡易版です。トークンは機密なので公開環境では使い捨て推奨です。
+    </footer>
+
+    <!-- LiveKit クライアントSDK（UMD/CDN） -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/livekit-client/2.15.7/livekit-client.umd.js"></script>
+    <script>
+      // ====== 設定（必要に応じて編集）======
+      const roomName = 'vr-demo';
+      const wsUrl = 'wss://relay.yuru-yuru.net';
+
+      // ★ここに「視聴者用のJoinトークン」を貼り付ける（管理JWTではなく、Join用！）
+      // 例）const token = 'eyJhbGciOi...';
+      const token =
+        'eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5TdWJzY3JpYmUiOnRydWUsImNhblB1Ymxpc2giOmZhbHNlLCJjYW5QdWJsaXNoRGF0YSI6ZmFsc2V9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY2MDk2NTQ1LCJuYmYiOjAsInN1YiI6InZpZXdlci0zZDh2OTMifQ.epdrv0CftHMpIvBRdSH4gs4PuARYcA9NlqQ7Bh8uyHU';
+      // =====================================
+
+      const videos = document.getElementById('videos');
+      const joinBtn = document.getElementById('join');
+      const leaveBtn = document.getElementById('leave');
+      const statusEl = document.getElementById('status');
+      const errEl = document.getElementById('err');
+
+      let room;
+
+      function setStatus(s) {
+        statusEl.textContent = s;
+      }
+      function showErr(e) {
+        errEl.style.display = 'block';
+        errEl.textContent = e && e.message ? e.message : String(e);
+        console.error(e);
+      }
+
+      function attachTrack(pub) {
+        if (pub.isSubscribed && pub.track) {
+          const track = pub.track;
+          if (track.kind === 'video') {
+            const el = track.attach();
+            el.playsInline = true;
+            videos.appendChild(el);
+            el.play().catch(() => {});
+          } else if (track.kind === 'audio') {
+            const el = track.attach();
+            el.style.display = 'none';
+            document.body.appendChild(el);
+            el.style.display = 'none';
+            el.autoplay = true;
+            el.muted = false;
+            document.body.appendChild(el);
+            // 明示的に再生キック（失敗しても無視）
+            el.play().catch(() => {});
+          }
+        }
+      }
+
+      async function join() {
+        try {
+          // ※ ユーザーのクリック直後なので AudioContext を resume しておく
+          try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) {
+              const ac = new AC();
+              if (ac.state !== 'running') await ac.resume();
+            }
+          } catch (_) {}
+
+          errEl.style.display = 'none';
+          setStatus('connecting…');
+          joinBtn.disabled = true;
+
+          if (!token || token === 'TOKEN_HERE') {
+            throw new Error(
+              '視聴者トークンが未設定です。token 定数にJoinトークンを貼ってください。'
+            );
+          }
+
+          room = new LivekitClient.Room({
+            adaptiveStream: true,
+            dynacast: true,
+          });
+
+          // イベント購読
+          room.on(
+            LivekitClient.RoomEvent.TrackSubscribed,
+            (_track, pub, _participant) => attachTrack(pub)
+          );
+          room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) =>
+            p.tracks.forEach((pub) => attachTrack(pub))
+          );
+          room.on(LivekitClient.RoomEvent.Disconnected, () => {
+            setStatus('disconnected');
+          });
+
+          await room.connect(wsUrl, token); // ← ここでトークンを使用
+          setStatus('connected');
+          leaveBtn.disabled = false;
+
+          // 既存参加者のトラックを貼る
+          room.participants.forEach((p) =>
+            p.tracks.forEach((pub) => attachTrack(pub))
+          );
+        } catch (e) {
+          setStatus('error');
+          showErr(e);
+          joinBtn.disabled = false;
+        }
+      }
+
+      async function leave() {
+        try {
+          if (room) await room.disconnect();
+        } catch (e) {
+          console.warn(e);
+        } finally {
+          videos.innerHTML = '';
+          setStatus('idle');
+          joinBtn.disabled = false;
+          leaveBtn.disabled = true;
+        }
+      }
+
+      joinBtn.addEventListener('click', join);
+      leaveBtn.addEventListener('click', leave);
+      document.getElementById('roomLabel').textContent = roomName;
+    </script>
+
+    <!-- Minimal addition: hidden audio element for remote audio -->
+    <audio id="remoteAudio" autoplay playsinline hidden></audio>
+    <script>
+      // Minimal, non-invasive audio hookup.
+      // Wait until the existing script defines a global-like 'room' after join().
+      (function attachAudioWhenReady() {
+        const audioEl = document.getElementById('remoteAudio');
+        function hook(room) {
+          if (!room || room.__audioHooked) return;
+          room.__audioHooked = true;
+
+          // When new tracks arrive
+          const onSubscribed = (track, publication, participant) => {
+            try {
+              if (track && track.kind === 'audio') {
+                track.attach(audioEl);
+                audioEl.muted = false;
+                audioEl.play().catch(() => {});
+              }
+            } catch (e) {
+              console.warn('audio hook subscribe err', e);
+            }
+          };
+          const onUnsubscribed = (track) => {
+            try {
+              if (track && track.kind === 'audio') {
+                track.detach(audioEl);
+              }
+            } catch (e) {
+              console.warn('audio hook unsubscribe err', e);
+            }
+          };
+          room.on?.('trackSubscribed', onSubscribed);
+          room.on?.('trackUnsubscribed', onUnsubscribed);
+
+          // Also attach if audio track already published before we hooked
+          try {
+            room.participants?.forEach?.((p) => {
+              p.audioTracks?.forEach?.((pub) => {
+                if (pub?.track) onSubscribed(pub.track, pub, p);
+              });
+            });
+            if (room.localParticipant) {
+              room.localParticipant.audioTracks?.forEach?.((pub) => {
+                if (pub?.track)
+                  onSubscribed(pub.track, pub, room.localParticipant);
+              });
+            }
+          } catch (e) {
+            console.warn('audio hook scan err', e);
+          }
+        }
+
+        // Poll for a 'room' variable on window scope or in the global 'room' identifier.
+        let tries = 0;
+        const iv = setInterval(() => {
+          tries++;
+          try {
+            // Attempt to find a room instance likely stored on window or global scope.
+            const r = window.room || window.lkRoom || window.currentRoom;
+            if (r && typeof r.on === 'function') {
+              hook(r);
+              clearInterval(iv);
+            }
+          } catch {}
+          if (tries > 120) clearInterval(iv); // stop after ~2 minutes
+        }, 1000);
+      })();
+    </script>
+  </body>
+</html>

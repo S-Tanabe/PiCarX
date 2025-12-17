@@ -26,21 +26,28 @@ def drive(throttle: float, steer: float):
     """
     print(f"[DRIVE] throttle={throttle:.2f}, steer={steer:.2f}")
 
-    # ステアリング角度を設定 (-30〜+30度)
-    steer_angle = int(steer * DIR_SERVO_MAX_ANGLE)
-    steer_angle = max(-DIR_SERVO_MAX_ANGLE, min(DIR_SERVO_MAX_ANGLE, steer_angle))
-    px.set_dir_servo_angle(steer_angle)
+    try:
+        # ステアリング角度を設定 (-30〜+30度)
+        steer_angle = int(steer * DIR_SERVO_MAX_ANGLE)
+        steer_angle = max(-DIR_SERVO_MAX_ANGLE, min(DIR_SERVO_MAX_ANGLE, steer_angle))
+        print(f"  -> set_dir_servo_angle({steer_angle})")
+        px.set_dir_servo_angle(steer_angle)
 
-    # 速度を計算 (0〜100)
-    speed = int(abs(throttle) * 100)
-    speed = max(0, min(100, speed))
+        # 速度を計算 (0〜100)
+        speed = int(abs(throttle) * 100)
+        speed = max(0, min(100, speed))
 
-    if throttle > 0.01:
-        px.forward(speed)
-    elif throttle < -0.01:
-        px.backward(speed)
-    else:
-        px.stop()
+        if throttle > 0.01:
+            print(f"  -> forward({speed})")
+            px.forward(speed)
+        elif throttle < -0.01:
+            print(f"  -> backward({speed})")
+            px.backward(speed)
+        else:
+            print(f"  -> stop()")
+            px.stop()
+    except Exception as e:
+        print(f"[ERROR] drive: {e}")
 
 def camera_move(pan_deg: float, tilt_deg: float):
     """
@@ -49,13 +56,18 @@ def camera_move(pan_deg: float, tilt_deg: float):
     """
     print(f"[CAMERA] pan={pan_deg:.1f}°, tilt={tilt_deg:.1f}°")
 
-    # パン角度を設定 (-90〜+90度)
-    pan_deg = max(-90, min(90, pan_deg))
-    px.set_cam_pan_angle(pan_deg)
+    try:
+        # パン角度を設定 (-90〜+90度)
+        pan_deg = max(-90, min(90, pan_deg))
+        print(f"  -> set_cam_pan_angle({pan_deg})")
+        px.set_cam_pan_angle(pan_deg)
 
-    # チルト角度を設定 (-35〜+65度)
-    tilt_deg = max(-35, min(65, tilt_deg))
-    px.set_cam_tilt_angle(tilt_deg)
+        # チルト角度を設定 (-35〜+65度)
+        tilt_deg = max(-35, min(65, tilt_deg))
+        print(f"  -> set_cam_tilt_angle({tilt_deg})")
+        px.set_cam_tilt_angle(tilt_deg)
+    except Exception as e:
+        print(f"[ERROR] camera_move: {e}")
 
 def on_connect(client, userdata, flags, rc, props=None):
     print("MQTT connected:", rc)

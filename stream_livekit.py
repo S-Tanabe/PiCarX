@@ -12,7 +12,7 @@ from livekit import rtc
 # ============ 設定 ============
 LIVEKIT_URL = "wss://relay.yuru-yuru.net"
 # canPublish: true のトークンが必要
-LIVEKIT_TOKEN = "YOUR_PUBLISH_TOKEN"
+LIVEKIT_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5QdWJsaXNoIjp0cnVlLCJjYW5TdWJzY3JpYmUiOmZhbHNlfSwiaXNzIjoiTEtfQVBJX0tFWSIsImV4cCI6MTc2ODYyNjMwNiwibmJmIjowLCJzdWIiOiJwaS1jYW1lcmEifQ.rVgPTGGZzdYtVXiIF3mQiUW1jv14FSLwhsHJkarXJWk"
 
 WIDTH = 1280
 HEIGHT = 720

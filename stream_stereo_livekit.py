@@ -79,15 +79,14 @@ async def main():
     track = rtc.LocalVideoTrack.create_video_track("stereo-camera", source)
 
     # トラックをPublish（高画質設定）
-    options = rtc.TrackPublishOptions()
-    options.source = rtc.TrackSource.SOURCE_CAMERA
-    # ビデオエンコード設定（ビットレートを上げる）
-    options.video_encoding = rtc.VideoEncoding(
-        max_bitrate=8_000_000,  # 8 Mbps
-        max_framerate=FPS,
+    options = rtc.TrackPublishOptions(
+        source=rtc.TrackSource.SOURCE_CAMERA,
+        video_encoding=rtc.VideoEncoding(
+            max_bitrate=8_000_000,  # 8 Mbps
+            max_framerate=FPS,
+        ),
+        simulcast=False,  # 単一の高画質ストリーム
     )
-    # Simulcast無効（単一の高画質ストリーム）
-    options.simulcast = False
     publication = await room.local_participant.publish_track(track, options)
     print(f"Published track: {publication.sid}")
     print(f"Video encoding: 8 Mbps, {FPS} fps")

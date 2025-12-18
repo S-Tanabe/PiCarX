@@ -113,8 +113,8 @@
     <header>
       <div class="row">
         <strong>Room:</strong> <code id="roomLabel">vr-demo</code>
-        <button id="join">Join</button>
-        <button id="leave" disabled>Leave</button>
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
         <span id="status" class="small">idle</span>
       </div>
       <div class="grow"></div>
@@ -126,8 +126,7 @@
         <label
           >Topic base: <input id="topicBase" size="14" value="demo/picarx"
         /></label>
-        <button id="mqttConnect">Connect</button>
-        <span id="mqttStatus" class="small">disconnected</span>
+        <span id="mqttStatus" class="small">-</span>
       </div>
     </header>
 
@@ -223,8 +222,8 @@
       // =====================================
 
       const videos = document.getElementById('videos');
-      const joinBtn = document.getElementById('join');
-      const leaveBtn = document.getElementById('leave');
+      const connectBtn = document.getElementById('connectBtn');
+      const disconnectBtn = document.getElementById('disconnectBtn');
       const statusEl = document.getElementById('status');
       const errEl = document.getElementById('err');
       const audioEl = document.getElementById('remoteAudio');
@@ -232,7 +231,6 @@
       const mqttUrlEl = document.getElementById('mqttUrl');
       const topicBaseEl = document.getElementById('topicBase');
       const mqttStatusEl = document.getElementById('mqttStatus');
-      const mqttBtn = document.getElementById('mqttConnect');
 
       const speedEl = document.getElementById('speed');
       const speedVal = document.getElementById('speedVal');
@@ -245,10 +243,16 @@
       function setStatus(s) {
         statusEl.textContent = s;
       }
+      function setMqttStatus(s) {
+        mqttStatusEl.textContent = s;
+      }
       function showErr(e) {
         errEl.style.display = 'block';
         errEl.textContent = e && e.message ? e.message : String(e);
         console.error(e);
+      }
+      function hideErr() {
+        errEl.style.display = 'none';
       }
 
       function attachTrack(pub) {
@@ -271,8 +275,77 @@
         }
       }
 
-      async function join() {
+      // LiveKit接続（Promise返却）
+      async function connectLiveKit() {
+        if (!token || token === 'TOKEN_HERE') {
+          throw new Error('視聴者トークンが未設定です');
+        }
+
+        room = new LivekitClient.Room({
+          adaptiveStream: true,
+          dynacast: true,
+        });
+        window.lkRoom = room;
+
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (_track, pub, _p) =>
+          attachTrack(pub)
+        );
+        room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) =>
+          p.trackPublications.forEach(attachTrack)
+        );
+        room.on(LivekitClient.RoomEvent.Disconnected, () => {
+          setStatus('disconnected');
+        });
+
+        await room.connect(wsUrl, token);
+      }
+
+      // MQTT接続（Promise返却）
+      function connectMqtt() {
+        return new Promise((resolve, reject) => {
+          const url = mqttUrlEl.value.trim();
+          if (!/^wss?:\/\//.test(url)) {
+            reject(new Error('MQTT URL は ws:// か wss:// で指定してください'));
+            return;
+          }
+
+          if (mqttClient) {
+            mqttClient.end(true);
+            mqttClient = null;
+          }
+
+          const timeoutId = setTimeout(() => {
+            reject(new Error('MQTT接続がタイムアウトしました'));
+          }, 10000);
+
+          mqttClient = mqtt.connect(url, {
+            keepalive: 30,
+            reconnectPeriod: 0,  // 自動再接続無効（初回接続時）
+          });
+
+          mqttClient.on('connect', () => {
+            clearTimeout(timeoutId);
+            setMqttStatus('connected');
+            // 接続後は自動再接続を有効化
+            mqttClient.options.reconnectPeriod = 2000;
+            resolve();
+          });
+
+          mqttClient.on('error', (e) => {
+            clearTimeout(timeoutId);
+            setMqttStatus('error');
+            reject(new Error('MQTT接続エラー: ' + e.message));
+          });
+
+          mqttClient.on('reconnect', () => setMqttStatus('reconnecting…'));
+          mqttClient.on('close', () => setMqttStatus('disconnected'));
+        });
+      }
+
+      // 統合接続関数
+      async function connect() {
         try {
+          // AudioContext初期化
           try {
             const AC = window.AudioContext || window.webkitAudioContext;
             if (AC) {
@@ -281,92 +354,58 @@
             }
           } catch {}
 
-          errEl.style.display = 'none';
+          hideErr();
           setStatus('connecting…');
-          joinBtn.disabled = true;
+          setMqttStatus('connecting…');
+          connectBtn.disabled = true;
 
-          if (!token || token === 'TOKEN_HERE') {
-            throw new Error(
-              '視聴者トークンが未設定です。token に Join トークンを貼ってください。'
-            );
-          }
+          // 両方を並列で接続、両方成功が必要
+          await Promise.all([
+            connectLiveKit(),
+            connectMqtt()
+          ]);
 
-          room = new LivekitClient.Room({
-            adaptiveStream: true,
-            dynacast: true,
-          });
-          window.lkRoom = room;
-
-          room.on(LivekitClient.RoomEvent.TrackSubscribed, (_track, pub, _p) =>
-            attachTrack(pub)
-          );
-          room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) =>
-            p.trackPublications.forEach(attachTrack)
-          );
-          room.on(LivekitClient.RoomEvent.Disconnected, () =>
-            setStatus('disconnected')
-          );
-
-          await room.connect(wsUrl, token);
           setStatus('connected');
-          leaveBtn.disabled = false;
+          disconnectBtn.disabled = false;
         } catch (e) {
+          // エラー時は両方を切断
+          await disconnect(true);
           setStatus('error');
           showErr(e);
-          joinBtn.disabled = false;
+          connectBtn.disabled = false;
         }
       }
 
-      async function leave() {
+      // 統合切断関数
+      async function disconnect(silent = false) {
         try {
-          if (room) await room.disconnect();
+          if (room) {
+            await room.disconnect();
+            room = null;
+          }
         } catch (e) {
-          console.warn(e);
+          if (!silent) console.warn('LiveKit disconnect error:', e);
         }
-        videos.innerHTML = '';
-        setStatus('idle');
-        joinBtn.disabled = false;
-        leaveBtn.disabled = true;
-      }
 
-      joinBtn.addEventListener('click', join);
-      leaveBtn.addEventListener('click', leave);
-      document.getElementById('roomLabel').textContent = roomName;
-
-      // ===== MQTT =====
-      function mqttConnect() {
-        const url = mqttUrlEl.value.trim();
-        if (!/^wss?:\/\//.test(url)) {
-          alert('MQTT URL は ws:// か wss:// で指定してください');
-          return;
-        }
         try {
           if (mqttClient) {
             mqttClient.end(true);
             mqttClient = null;
           }
-          mqttClient = mqtt.connect(url, {
-            keepalive: 30,
-            reconnectPeriod: 2000,
-          });
-          mqttClient.on(
-            'connect',
-            () => (mqttStatusEl.textContent = 'connected')
-          );
-          mqttClient.on(
-            'reconnect',
-            () => (mqttStatusEl.textContent = 'reconnecting…')
-          );
-          mqttClient.on(
-            'close',
-            () => (mqttStatusEl.textContent = 'disconnected')
-          );
-          mqttClient.on('error', (e) => console.warn('MQTT error', e));
         } catch (e) {
-          showErr(e);
+          if (!silent) console.warn('MQTT disconnect error:', e);
         }
+
+        videos.innerHTML = '';
+        setStatus('idle');
+        setMqttStatus('-');
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
       }
-      mqttBtn.addEventListener('click', mqttConnect);
+
+      connectBtn.addEventListener('click', connect);
+      disconnectBtn.addEventListener('click', () => disconnect(false));
+      document.getElementById('roomLabel').textContent = roomName;
 
       function publish(subtopic, payload) {
         if (!mqttClient || !mqttClient.connected) {

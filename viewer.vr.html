@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VR Stereo Viewer (LiveKit + WebXR)</title>
+    <title>VR Stereo Viewer + Controller (LiveKit + WebXR + MQTT)</title>
     <style>
       * { margin: 0; padding: 0; }
       body {
@@ -36,6 +36,7 @@
         padding: 10px;
         background: rgba(0,0,0,0.7);
         border-radius: 8px;
+        font-size: 14px;
       }
       #preview {
         position: absolute;
@@ -51,20 +52,61 @@
         height: 100%;
         display: block;
       }
+      .config {
+        background: rgba(0,0,0,0.7);
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .config input {
+        background: #222;
+        border: 1px solid #444;
+        color: #fff;
+        padding: 5px 8px;
+        border-radius: 4px;
+        width: 200px;
+      }
+      .config label {
+        display: block;
+        margin: 5px 0;
+      }
+      #controlInfo {
+        position: absolute;
+        bottom: 20px;
+        left: 20px;
+        background: rgba(0,0,0,0.8);
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        max-width: 300px;
+      }
     </style>
   </head>
   <body>
     <div id="ui">
-      <button id="connectBtn">Connect to LiveKit</button>
+      <button id="connectBtn">Connect (LiveKit + MQTT)</button>
       <button id="vrBtn" disabled>Enter VR</button>
       <button id="previewBtn" disabled>Preview Stereo (Non-VR)</button>
       <div id="status">Status: Disconnected</div>
+      <div class="config">
+        <label>MQTT URL: <input id="mqttUrl" value="ws://3.112.216.187:9001" /></label>
+        <label>Topic: <input id="topicBase" value="demo/picarx" /></label>
+      </div>
     </div>
     <video id="preview" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
+    <div id="controlInfo">
+      <strong>VR Controller:</strong><br>
+      Left Stick: Forward/Backward<br>
+      Right Stick: Left/Right<br>
+      Any Trigger: Stop
+    </div>
 
     <!-- LiveKit SDK -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/livekit-client/2.15.7/livekit-client.umd.js"></script>
+
+    <!-- MQTT SDK -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
     <!-- Three.js for WebXR -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -81,6 +123,8 @@
       const statusEl = document.getElementById('status');
       const preview = document.getElementById('preview');
       const canvas = document.getElementById('canvas');
+      const mqttUrlEl = document.getElementById('mqttUrl');
+      const topicBaseEl = document.getElementById('topicBase');
 
       let room = null;
       let videoElement = null;
@@ -88,74 +132,151 @@
       let xrSession = null;
       let videoTexture = null;
       let previewMode = false;
+      let mqttClient = null;
+
+      // コントローラー状態
+      let lastThrottle = 0;
+      let lastSteer = 0;
+      const DEADZONE = 0.15;
+      const SEND_INTERVAL = 100; // ms
+      let lastSendTime = 0;
 
       function setStatus(msg) {
-        statusEl.textContent = 'Status: ' + msg;
-        console.log(msg);
+        statusEl.innerHTML = msg;
+        console.log(msg.replace(/<br>/g, ' | '));
+      }
+
+      // MQTT接続
+      function connectMqtt() {
+        return new Promise((resolve, reject) => {
+          const url = mqttUrlEl.value.trim();
+          if (!/^wss?:\/\//.test(url)) {
+            reject(new Error('MQTT URL must start with ws:// or wss://'));
+            return;
+          }
+
+          if (mqttClient) {
+            mqttClient.end(true);
+            mqttClient = null;
+          }
+
+          const timeoutId = setTimeout(() => {
+            reject(new Error('MQTT connection timeout'));
+          }, 10000);
+
+          mqttClient = mqtt.connect(url, {
+            keepalive: 30,
+            reconnectPeriod: 2000,
+          });
+
+          mqttClient.on('connect', () => {
+            clearTimeout(timeoutId);
+            console.log('MQTT connected');
+            resolve();
+          });
+
+          mqttClient.on('error', (e) => {
+            clearTimeout(timeoutId);
+            reject(new Error('MQTT error: ' + e.message));
+          });
+
+          mqttClient.on('reconnect', () => console.log('MQTT reconnecting...'));
+          mqttClient.on('close', () => console.log('MQTT disconnected'));
+        });
+      }
+
+      // MQTT送信
+      function publishMqtt(subtopic, payload) {
+        if (!mqttClient || !mqttClient.connected) {
+          return;
+        }
+        const base = topicBaseEl.value.trim() || 'demo/picarx';
+        const topic = `${base}/${subtopic}`;
+        const msg = JSON.stringify(payload);
+        mqttClient.publish(topic, msg, { qos: 0, retain: false });
+      }
+
+      // 走行コマンド送信
+      function sendDrive(throttle, steer) {
+        publishMqtt('cmd', { throttle, steer });
       }
 
       // LiveKit接続
       async function connectLiveKit() {
-        setStatus('Connecting...');
-        connectBtn.disabled = true;
+        room = new LivekitClient.Room({
+          adaptiveStream: true,
+          dynacast: true,
+        });
 
-        try {
-          room = new LivekitClient.Room({
-            adaptiveStream: true,
-            dynacast: true,
-          });
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+          if (track.kind === 'video') {
+            videoElement = track.attach();
+            videoElement.style.display = 'none';
+            document.body.appendChild(videoElement);
 
-          room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
-            if (track.kind === 'video') {
-              setStatus('Video track received');
-              videoElement = track.attach();
+            const previewEl = track.attach();
+            preview.srcObject = previewEl.srcObject;
+
+            if (videoTexture) {
+              videoTexture.image = videoElement;
+            }
+
+            vrBtn.disabled = false;
+            previewBtn.disabled = false;
+          }
+        });
+
+        room.on(LivekitClient.RoomEvent.Disconnected, () => {
+          setStatus('Status: Disconnected');
+          vrBtn.disabled = true;
+          previewBtn.disabled = true;
+          connectBtn.disabled = false;
+        });
+
+        await room.connect(wsUrl, token);
+
+        // 既存の参加者のトラックを購読
+        room.remoteParticipants.forEach(p => {
+          p.trackPublications.forEach(pub => {
+            if (pub.isSubscribed && pub.track && pub.track.kind === 'video') {
+              videoElement = pub.track.attach();
               videoElement.style.display = 'none';
               document.body.appendChild(videoElement);
 
-              // プレビュー表示
-              const previewEl = track.attach();
+              const previewEl = pub.track.attach();
               preview.srcObject = previewEl.srcObject;
-
-              // WebXR用テクスチャ更新
-              if (videoTexture) {
-                videoTexture.image = videoElement;
-              }
 
               vrBtn.disabled = false;
               previewBtn.disabled = false;
             }
           });
+        });
 
-          room.on(LivekitClient.RoomEvent.Disconnected, () => {
-            setStatus('Disconnected');
-            vrBtn.disabled = true;
-            previewBtn.disabled = true;
-            connectBtn.disabled = false;
-          });
+        return room.name;
+      }
 
-          await room.connect(wsUrl, token);
-          setStatus('Connected to room: ' + room.name);
+      // 統合接続
+      async function connect() {
+        connectBtn.disabled = true;
+        setStatus('Status: Connecting...');
 
-          // 既存の参加者のトラックを購読
-          room.remoteParticipants.forEach(p => {
-            p.trackPublications.forEach(pub => {
-              if (pub.isSubscribed && pub.track && pub.track.kind === 'video') {
-                videoElement = pub.track.attach();
-                videoElement.style.display = 'none';
-                document.body.appendChild(videoElement);
-
-                const previewEl = pub.track.attach();
-                preview.srcObject = previewEl.srcObject;
-
-                vrBtn.disabled = false;
-                previewBtn.disabled = false;
-              }
-            });
-          });
-
+        try {
+          const [roomName] = await Promise.all([
+            connectLiveKit(),
+            connectMqtt()
+          ]);
+          setStatus(`Status: Connected<br>Room: ${roomName}<br>MQTT: OK`);
         } catch (e) {
-          setStatus('Connection failed: ' + e.message);
+          setStatus('Status: Error - ' + e.message);
           connectBtn.disabled = false;
+          if (room) {
+            await room.disconnect();
+            room = null;
+          }
+          if (mqttClient) {
+            mqttClient.end(true);
+            mqttClient = null;
+          }
         }
       }
 
@@ -168,7 +289,6 @@
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x000000);
 
-        // ステレオカメラ（左右）
         cameraL = new THREE.PerspectiveCamera(75, 0.5, 0.1, 1000);
         cameraR = new THREE.PerspectiveCamera(75, 0.5, 0.1, 1000);
       }
@@ -192,22 +312,21 @@
           });
 
           await renderer.xr.setSession(xrSession);
-          setStatus('VR Mode Active');
+          setStatus('Status: VR Mode Active<br>Use controllers to drive');
 
-          // ステレオビデオ用のジオメトリとマテリアル作成
           createStereoVideoMesh();
-
-          // レンダリングループ開始
           renderer.setAnimationLoop(renderVR);
 
           xrSession.addEventListener('end', () => {
-            setStatus('VR Mode Ended');
+            setStatus('Status: VR Mode Ended');
             renderer.setAnimationLoop(null);
             xrSession = null;
+            // 停止コマンド送信
+            sendDrive(0, 0);
           });
 
         } catch (e) {
-          setStatus('Failed to enter VR: ' + e.message);
+          setStatus('Status: Failed to enter VR - ' + e.message);
         }
       }
 
@@ -215,21 +334,16 @@
       function createStereoVideoMesh() {
         if (!videoElement) return;
 
-        // ビデオテクスチャ
         videoTexture = new THREE.VideoTexture(videoElement);
         videoTexture.minFilter = THREE.LinearFilter;
         videoTexture.magFilter = THREE.LinearFilter;
 
-        // 球体ジオメトリ（内側から見る）
         const radius = 5;
         const geometry = new THREE.SphereGeometry(radius, 64, 32);
-        geometry.scale(-1, 1, 1); // 内側を向ける
+        geometry.scale(-1, 1, 1);
 
-        // 左目用マテリアル（テクスチャの左半分）
         const materialL = new THREE.ShaderMaterial({
-          uniforms: {
-            map: { value: videoTexture }
-          },
+          uniforms: { map: { value: videoTexture } },
           vertexShader: `
             varying vec2 vUv;
             void main() {
@@ -241,7 +355,6 @@
             uniform sampler2D map;
             varying vec2 vUv;
             void main() {
-              // 左半分のみ使用 (0.0 ~ 0.5)
               vec2 uv = vec2(vUv.x * 0.5, vUv.y);
               gl_FragColor = texture2D(map, uv);
             }
@@ -249,11 +362,8 @@
           side: THREE.BackSide
         });
 
-        // 右目用マテリアル（テクスチャの右半分）
         const materialR = new THREE.ShaderMaterial({
-          uniforms: {
-            map: { value: videoTexture }
-          },
+          uniforms: { map: { value: videoTexture } },
           vertexShader: `
             varying vec2 vUv;
             void main() {
@@ -265,7 +375,6 @@
             uniform sampler2D map;
             varying vec2 vUv;
             void main() {
-              // 右半分のみ使用 (0.5 ~ 1.0)
               vec2 uv = vec2(0.5 + vUv.x * 0.5, vUv.y);
               gl_FragColor = texture2D(map, uv);
             }
@@ -273,15 +382,76 @@
           side: THREE.BackSide
         });
 
-        // 左目用メッシュ（レイヤー1）
         const meshL = new THREE.Mesh(geometry.clone(), materialL);
         meshL.layers.set(1);
         scene.add(meshL);
 
-        // 右目用メッシュ（レイヤー2）
         const meshR = new THREE.Mesh(geometry.clone(), materialR);
         meshR.layers.set(2);
         scene.add(meshR);
+      }
+
+      // コントローラー入力処理
+      function processControllerInput(session, frame) {
+        const now = performance.now();
+        if (now - lastSendTime < SEND_INTERVAL) return;
+
+        let throttle = 0;
+        let steer = 0;
+        let triggerPressed = false;
+
+        // XR入力ソースからゲームパッド取得
+        for (const source of session.inputSources) {
+          if (!source.gamepad) continue;
+
+          const gp = source.gamepad;
+          const axes = gp.axes;
+          const buttons = gp.buttons;
+
+          // Questコントローラー: axes[2]=X, axes[3]=Y (thumbstick)
+          // 左コントローラー: 前後（throttle）
+          // 右コントローラー: 左右（steer）
+          if (source.handedness === 'left' && axes.length >= 4) {
+            // Y軸（前後）- 上が負、下が正なので反転
+            const y = -axes[3];
+            if (Math.abs(y) > DEADZONE) {
+              throttle = y;
+            }
+          }
+
+          if (source.handedness === 'right' && axes.length >= 4) {
+            // X軸（左右）
+            const x = axes[2];
+            if (Math.abs(x) > DEADZONE) {
+              steer = x;
+            }
+          }
+
+          // トリガー（インデックス0が通常トリガー）で停止
+          if (buttons.length > 0 && buttons[0].pressed) {
+            triggerPressed = true;
+          }
+        }
+
+        // トリガーで強制停止
+        if (triggerPressed) {
+          throttle = 0;
+          steer = 0;
+        }
+
+        // 値が変化したか、定期送信
+        const changed = Math.abs(throttle - lastThrottle) > 0.05 ||
+                       Math.abs(steer - lastSteer) > 0.05;
+
+        if (changed || (throttle !== 0 || steer !== 0)) {
+          sendDrive(
+            Math.round(throttle * 100) / 100,
+            Math.round(steer * 100) / 100
+          );
+          lastThrottle = throttle;
+          lastSteer = steer;
+          lastSendTime = now;
+        }
       }
 
       // VRレンダリングループ
@@ -289,6 +459,12 @@
         if (!frame) return;
 
         const session = renderer.xr.getSession();
+
+        // コントローラー入力処理
+        if (session && mqttClient && mqttClient.connected) {
+          processControllerInput(session, frame);
+        }
+
         const pose = frame.getViewerPose(renderer.xr.getReferenceSpace());
 
         if (pose) {
@@ -306,7 +482,6 @@
             camera.projectionMatrix.fromArray(view.projectionMatrix);
             camera.matrixWorldNeedsUpdate = true;
 
-            // 対応するレイヤーのみ表示
             camera.layers.enable(view.eye === 'left' ? 1 : 2);
             camera.layers.disable(view.eye === 'left' ? 2 : 1);
 
@@ -314,31 +489,27 @@
           }
         }
 
-        // ビデオテクスチャ更新
         if (videoTexture) {
           videoTexture.needsUpdate = true;
         }
       }
 
-      // 非VRプレビューモード（PCブラウザ用）
+      // 非VRプレビューモード
       function startPreview() {
         if (!videoElement) return;
 
         previewMode = true;
-        setStatus('Preview Mode (Non-VR)');
+        setStatus('Status: Preview Mode (Non-VR)<br>Use arrow keys to control');
         preview.style.display = 'none';
 
-        // ビデオテクスチャ
         videoTexture = new THREE.VideoTexture(videoElement);
         videoTexture.minFilter = THREE.LinearFilter;
         videoTexture.magFilter = THREE.LinearFilter;
 
-        // 左右に分割表示するための平面
         const aspect = window.innerWidth / window.innerHeight;
         camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
         camera.position.z = 2;
 
-        // 左目用平面
         const planeGeomL = new THREE.PlaneGeometry(1, 1);
         const materialL = new THREE.ShaderMaterial({
           uniforms: { map: { value: videoTexture } },
@@ -362,7 +533,6 @@
         meshL.position.x = -0.55;
         scene.add(meshL);
 
-        // 右目用平面
         const planeGeomR = new THREE.PlaneGeometry(1, 1);
         const materialR = new THREE.ShaderMaterial({
           uniforms: { map: { value: videoTexture } },
@@ -386,7 +556,6 @@
         meshR.position.x = 0.55;
         scene.add(meshR);
 
-        // レンダリングループ
         function animate() {
           if (!previewMode) return;
           requestAnimationFrame(animate);
@@ -398,8 +567,37 @@
         previewBtn.disabled = true;
       }
 
+      // キーボード操作（非VR用）
+      window.addEventListener('keydown', (e) => {
+        if (!mqttClient || !mqttClient.connected) return;
+
+        const speed = 0.5;
+        switch (e.code) {
+          case 'ArrowUp':
+            sendDrive(speed, 0);
+            e.preventDefault();
+            break;
+          case 'ArrowDown':
+            sendDrive(-speed, 0);
+            e.preventDefault();
+            break;
+          case 'ArrowLeft':
+            sendDrive(speed, -1);
+            e.preventDefault();
+            break;
+          case 'ArrowRight':
+            sendDrive(speed, 1);
+            e.preventDefault();
+            break;
+          case 'Space':
+            sendDrive(0, 0);
+            e.preventDefault();
+            break;
+        }
+      });
+
       // イベントリスナー
-      connectBtn.addEventListener('click', connectLiveKit);
+      connectBtn.addEventListener('click', connect);
       vrBtn.addEventListener('click', enterVR);
       previewBtn.addEventListener('click', startPreview);
 

@@ -6,7 +6,8 @@
 
 - **EC2** 上の LiveKit サーバ（`relay.yuru-yuru.net` 経由、TURN有効）
 - **LiveKit Python SDK** を使った低遅延映像配信（部屋: `vr-demo`）
-- **Raspberry Pi 5 + カメラ (imx708_wide)** からの WebRTC 直接送出
+- **Raspberry Pi 5 + デュアルカメラ (imx708_wide ×2)** からの WebRTC ステレオ配信
+- **VR Viewer**（WebXR対応ステレオビューワー） … https://relay.yuru-yuru.net/vr
 - **ブラウザ Viewer**（映像購読 + **MQTT操作UI**） … `viewer.combined.html`
 - **Mosquitto (WebSocket)** による遠隔操作 (topic: `demo/picarx/cmd`)
 - **PiCar-X** 側の操作受信スクリプト … `pi_picarx_mqtt.py`
@@ -16,9 +17,9 @@
 ## 1. 構成図
 
 ```
-[Raspberry Pi 5 Camera] --(WebRTC via Python SDK)--> [EC2: LiveKit + TURN] --(WebRTC)--> [Viewer]
-                                                          |
-                                                          +--(Room: vr-demo)
+[Raspberry Pi 5 Dual Camera] --(WebRTC via Python SDK)--> [EC2: LiveKit + TURN] --(WebRTC)--> [VR Viewer]
+        (Side-by-Side Stereo)                                     |                    relay.yuru-yuru.net/vr
+                                                                  +--(Room: vr-demo)
 
 [Viewer 操作UI] --(MQTT over WebSocket 9001)--> [EC2: Mosquitto] --(TCP 1883)--> [Raspberry Pi 5]
                                                                                       |
@@ -222,16 +223,25 @@ python3 ~/programs/vr-controller/pi_picarx_mqtt.py
 
 ### 5.1 ファイル
 
-- `viewer.combined.html` … 映像購読 + MQTT 操作 UI
+- `viewer.combined.html` … 映像購読 + MQTT 操作 UI（ローカル）
+- `viewer.vr.html` … VRステレオビューワー（WebXR対応）
 
-### 5.2 使い方
+### 5.2 VR Viewer（オンライン）
+
+**URL:** https://relay.yuru-yuru.net/vr
+
+1. 「Connect to LiveKit」でライブ映像に接続
+2. 「Enter VR」でVRモードに入る（Quest等のVRデバイスで使用）
+3. 「Preview Stereo」でPC上でステレオ映像をプレビュー
+
+### 5.3 viewer.combined.html の使い方
 
 1. ファイル内の `token` を **Viewerトークン** に設定（`canSubscribe: true`）
 2. MQTT URL を `ws://<EC2のPublic IP>:9001` に設定
 3. **Connect** ボタンを押す（LiveKit + MQTT 同時接続）
 4. 矢印キー or ボタンで操作（Space で停止）
 
-### 5.3 Viewer トークン生成
+### 5.4 Viewer トークン生成
 
 ```javascript
 at.addGrant({
@@ -272,10 +282,12 @@ at.addGrant({
 
 | ファイル | 説明 |
 |----------|------|
-| `stream_livekit.py` | Python SDK による低遅延映像配信 |
+| `stream_livekit.py` | Python SDK による低遅延映像配信（シングルカメラ） |
+| `stream_stereo_livekit.py` | ステレオ映像配信（2カメラ Side-by-Side） |
 | `stream_whip.sh` | WHIP配信スクリプト（参考、FFmpegにWHIP非対応の場合あり） |
 | `pi_picarx_mqtt.py` | PiCar-X MQTT 制御 |
 | `viewer.combined.html` | ブラウザビューワー + 操作UI |
+| `viewer.vr.html` | VRステレオビューワー（WebXR対応） |
 | `test_livekit_connect.py` | 接続テスト用 |
 | `test_new_token.py` | 新トークンテスト用 |
 
@@ -283,16 +295,22 @@ at.addGrant({
 
 ## 8. 参考値
 
+### シングルカメラ（stream_livekit.py）
 - 解像度/フレーム: `1280x720@30fps`
 - 映像コーデック: VP8/VP9（Python SDK デフォルト）
 - 遅延: 1秒以下（WebRTC直接）
 
+### ステレオカメラ（stream_stereo_livekit.py）
+- 解像度/フレーム: `3840x1080@30fps`（Side-by-Side: 1920x1080 × 2）
+- ビットレート: 8 Mbps
+- 遅延: 1秒以下（WebRTC直接）
+
 ---
 
-## 9. 今後の予定
+## 9. 実装完了
 
-- [ ] VRステレオ対応（2カメラ Side-by-Side）
-- [ ] Oculus Quest WebXR ビューワー
+- [x] VRステレオ対応（2カメラ Side-by-Side）
+- [x] Oculus Quest WebXR ビューワー（https://relay.yuru-yuru.net/vr）
 
 ---
 

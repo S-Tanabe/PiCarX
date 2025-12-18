@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 LiveKit Python SDK 接続テスト（映像なし）
-ICE-TCP強制オプション付き
 """
 
 import asyncio
@@ -19,18 +18,7 @@ LIVEKIT_TOKEN = "YOUR_PUBLISH_TOKEN_HERE"
 async def main():
     print(f"LiveKit SDK version: {rtc.__version__ if hasattr(rtc, '__version__') else 'unknown'}")
 
-    # RoomOptionsでICE transportをTCPに強制
-    room_options = rtc.RoomOptions(
-        auto_subscribe=True,
-        dynacast=False,
-    )
-
-    # RTCConfigurationでICE transport policyを設定
-    rtc_config = rtc.RtcConfiguration(
-        ice_transport_type=rtc.IceTransportType.ALL,  # すべてのトランスポートを許可
-    )
-    room_options.rtc_config = rtc_config
-
+    # シンプルな接続テスト
     room = rtc.Room()
 
     @room.on("connected")
@@ -51,7 +39,7 @@ async def main():
     try:
         # タイムアウトを長めに設定
         await asyncio.wait_for(
-            room.connect(LIVEKIT_URL, LIVEKIT_TOKEN, options=room_options),
+            room.connect(LIVEKIT_URL, LIVEKIT_TOKEN),
             timeout=30.0
         )
         print(f"SUCCESS: Connected to room: {room.name}")

@@ -95,6 +95,14 @@ async def main():
             frame_left = cam_left.capture_array()   # RGB888
             frame_right = cam_right.capture_array() # RGB888
 
+            # BGR → RGB 変換（Picamera2はBGR順で出力する場合がある）
+            frame_left = frame_left[:, :, ::-1]
+            frame_right = frame_right[:, :, ::-1]
+
+            # 180度回転（カメラが上下逆に設置されている場合）
+            frame_left = frame_left[::-1, ::-1]
+            frame_right = frame_right[::-1, ::-1]
+
             # 横に結合（Side-by-Side）
             stereo_frame = np.hstack([frame_left, frame_right])
 

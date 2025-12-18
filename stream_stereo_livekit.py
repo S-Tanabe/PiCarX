@@ -15,9 +15,10 @@ LIVEKIT_URL = "wss://relay.yuru-yuru.net"
 LIVEKIT_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5QdWJsaXNoIjp0cnVlLCJjYW5TdWJzY3JpYmUiOnRydWV9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY4NjMwOTkyLCJuYmYiOjAsInN1YiI6InBpLWNhbWVyYS12MiJ9.P1JQ5XBNln9mB_rLAPM-F1NrVZMujcTuxAjqNfdTbx8"
 
 # 各カメラの解像度（Side-by-Sideなので合計は WIDTH*2 x HEIGHT）
-WIDTH = 1280   # 各目の幅
-HEIGHT = 720   # 各目の高さ
-FPS = 30
+# 低: 1280x720, 中: 1920x1080, 高: 2304x1296
+WIDTH = 1920   # 各目の幅
+HEIGHT = 1080  # 各目の高さ
+FPS = 30       # 負荷が高い場合は24に下げる
 
 # カメラID（左目=0, 右目=1）
 LEFT_CAM_ID = 0
@@ -77,11 +78,19 @@ async def main():
     source = rtc.VideoSource(stereo_width, HEIGHT)
     track = rtc.LocalVideoTrack.create_video_track("stereo-camera", source)
 
-    # トラックをPublish
+    # トラックをPublish（高画質設定）
     options = rtc.TrackPublishOptions()
     options.source = rtc.TrackSource.SOURCE_CAMERA
+    # ビデオエンコード設定（ビットレートを上げる）
+    options.video_encoding = rtc.VideoEncoding(
+        max_bitrate=8_000_000,  # 8 Mbps
+        max_framerate=FPS,
+    )
+    # Simulcast無効（単一の高画質ストリーム）
+    options.simulcast = False
     publication = await room.local_participant.publish_track(track, options)
     print(f"Published track: {publication.sid}")
+    print(f"Video encoding: 8 Mbps, {FPS} fps")
 
     interval = 1.0 / FPS
     frame_count = 0

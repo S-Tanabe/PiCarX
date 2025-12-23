@@ -307,10 +307,14 @@ at.addGrant({
 
 ---
 
-## 9. 実装完了
+## 9. 実装状況
 
-- [x] VRステレオ対応（2カメラ Side-by-Side）
+- [x] VRステレオ配信（2カメラ Side-by-Side）
 - [x] Oculus Quest WebXR ビューワー（https://relay.yuru-yuru.net/vr）
+- [x] VRコントローラー操作（走行・パン/チルト）
+- [ ] VRステレオ分離表示（左右の目に別映像）← 課題
+
+詳細は [VR_IMPLEMENTATION_STATUS.md](./VR_IMPLEMENTATION_STATUS.md) を参照。
 
 ---
 

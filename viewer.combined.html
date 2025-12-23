@@ -107,6 +107,24 @@
         font-size: 12px;
         opacity: 0.8;
       }
+      .card.disabled {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+      .card.disabled::after {
+        content: '接続してください';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.8);
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .card {
+        position: relative;
+      }
     </style>
   </head>
   <body>
@@ -121,7 +139,7 @@
       <div class="row">
         <strong>MQTT</strong>
         <label
-          >URL: <input id="mqttUrl" size="24" value="ws://3.112.216.187:9001"
+          >URL: <input id="mqttUrl" size="24" value="wss://relay.yuru-yuru.net/mqtt"
         /></label>
         <label
           >Topic base: <input id="topicBase" size="14" value="demo/picarx"
@@ -134,7 +152,7 @@
 
     <div class="wrap">
       <!-- Controls -->
-      <div class="card">
+      <div class="card" id="controlPanel">
         <h3 style="margin: 4px 0 8px">PiCarX 操作</h3>
         <div class="small">
           キーボードでも操作可：<span class="kbd">↑</span> 前進
@@ -218,7 +236,7 @@
       const wsUrl = 'wss://relay.yuru-yuru.net';
       // ★ここに視聴者Joinトークン（管理JWTではない）を貼り付け
       const token =
-        'eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5TdWJzY3JpYmUiOnRydWUsImNhblB1Ymxpc2giOmZhbHNlLCJjYW5QdWJsaXNoRGF0YSI6ZmFsc2V9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY2MDk2NTQ1LCJuYmYiOjAsInN1YiI6InZpZXdlci0zZDh2OTMifQ.epdrv0CftHMpIvBRdSH4gs4PuARYcA9NlqQ7Bh8uyHU';
+        'eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5TdWJzY3JpYmUiOnRydWUsImNhblB1Ymxpc2giOmZhbHNlLCJjYW5QdWJsaXNoRGF0YSI6ZmFsc2V9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY2MjI0MDc3LCJuYmYiOjAsInN1YiI6InZpZXdlci1yNm1qanYifQ.rY3ppQhTspgamrEkP7TRQ9e2ReKke5gZEYlh_SO7SFo';  // 有効期限: 30日
       // =====================================
 
       const videos = document.getElementById('videos');
@@ -236,9 +254,22 @@
       const speedVal = document.getElementById('speedVal');
       const panEl = document.getElementById('pan');
       const tiltEl = document.getElementById('tilt');
+      const controlPanel = document.getElementById('controlPanel');
 
       let room;
       let mqttClient;
+
+      // 操作パネルの有効/無効切り替え
+      function setControlsEnabled(enabled) {
+        if (enabled) {
+          controlPanel.classList.remove('disabled');
+        } else {
+          controlPanel.classList.add('disabled');
+        }
+      }
+
+      // 初期状態は無効
+      setControlsEnabled(false);
 
       function setStatus(s) {
         statusEl.textContent = s;
@@ -367,6 +398,7 @@
 
           setStatus('connected');
           disconnectBtn.disabled = false;
+          setControlsEnabled(true);
         } catch (e) {
           // エラー時は両方を切断
           await disconnect(true);
@@ -401,6 +433,7 @@
         setMqttStatus('-');
         connectBtn.disabled = false;
         disconnectBtn.disabled = true;
+        setControlsEnabled(false);
       }
 
       connectBtn.addEventListener('click', connect);
@@ -465,6 +498,9 @@
 
       // Keyboard controls
       window.addEventListener('keydown', (e) => {
+        // 未接続時は操作を無視
+        if (!mqttClient || !mqttClient.connected) return;
+
         const speed = Number(speedEl.value) / 100; // 0..1 に正規化
         if (e.code === 'ArrowUp') {
           sendDrive(speed, 0);

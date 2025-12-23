@@ -86,6 +86,7 @@
     <div id="ui">
       <button id="connectBtn">Connect (LiveKit + MQTT)</button>
       <button id="vrBtn" disabled>Enter VR</button>
+      <button id="vrStereoBtn" disabled>Enter VR (Stereo Beta)</button>
       <button id="previewBtn" disabled>Preview Stereo (Non-VR)</button>
       <div id="status">Status: Disconnected</div>
       <div class="config">
@@ -119,6 +120,7 @@
 
       const connectBtn = document.getElementById('connectBtn');
       const vrBtn = document.getElementById('vrBtn');
+      const vrStereoBtn = document.getElementById('vrStereoBtn');
       const previewBtn = document.getElementById('previewBtn');
       const statusEl = document.getElementById('status');
       const preview = document.getElementById('preview');
@@ -133,6 +135,15 @@
       let videoTexture = null;
       let previewMode = false;
       let mqttClient = null;
+      let vrMode = false;
+      let vrModeType = null; // 'legacy' or 'layers'
+      let xrReferenceSpace = null;
+      let xrMediaBinding = null;
+      let xrQuadLayer = null;
+      let xrProjectionLayer = null;
+      let xrGlContext = null;
+      let stereoMeshL = null;
+      let stereoMeshR = null;
 
       // コントローラー状態
       let lastThrottle = 0;
@@ -201,6 +212,50 @@
         publishMqtt('cmd', { throttle, steer });
       }
 
+      function attachVideoTrack(track) {
+        const hidden = track.attach();
+        hidden.style.position = 'fixed';
+        hidden.style.left = '-10000px';
+        hidden.style.top = '0px';
+        hidden.style.width = '2px';
+        hidden.style.height = '2px';
+        hidden.style.opacity = '0';
+        hidden.style.pointerEvents = 'none';
+        hidden.playsInline = true;
+        hidden.muted = true;
+        document.body.appendChild(hidden);
+
+        const previewVideo = track.attach();
+        previewVideo.playsInline = true;
+        previewVideo.muted = true;
+        preview.srcObject = previewVideo.srcObject;
+
+        videoElement = hidden;
+        videoElement.play().catch(() => {});
+        preview.play().catch(() => {});
+
+        vrBtn.disabled = false;
+        vrStereoBtn.disabled = false;
+        previewBtn.disabled = false;
+      }
+
+      async function waitForVideoReady(video, timeoutMs = 6000) {
+        const start = performance.now();
+        while (true) {
+          if (
+            video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+            video.videoWidth > 0 &&
+            video.videoHeight > 0
+          ) {
+            return true;
+          }
+          if (performance.now() - start > timeoutMs) {
+            return false;
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
       // LiveKit接続
       async function connectLiveKit() {
         room = new LivekitClient.Room({
@@ -208,29 +263,27 @@
           dynacast: true,
         });
 
-        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
           if (track.kind === 'video') {
-            videoElement = track.attach();
-            videoElement.style.display = 'none';
-            document.body.appendChild(videoElement);
-
-            const previewEl = track.attach();
-            preview.srcObject = previewEl.srcObject;
-
-            if (videoTexture) {
-              videoTexture.image = videoElement;
-            }
-
-            vrBtn.disabled = false;
-            previewBtn.disabled = false;
+            attachVideoTrack(track);
           }
         });
 
-        room.on(LivekitClient.RoomEvent.Disconnected, () => {
+        room.on(LivekitClient.RoomEvent.Disconnected, async () => {
           setStatus('Status: Disconnected');
           vrBtn.disabled = true;
+          vrStereoBtn.disabled = true;
           previewBtn.disabled = true;
           connectBtn.disabled = false;
+          vrMode = false;
+          vrModeType = null;
+          cleanupLayers();
+          if (xrSession) {
+            try {
+              await xrSession.end();
+            } catch (_) {}
+            xrSession = null;
+          }
         });
 
         await room.connect(wsUrl, token);
@@ -239,15 +292,7 @@
         room.remoteParticipants.forEach(p => {
           p.trackPublications.forEach(pub => {
             if (pub.isSubscribed && pub.track && pub.track.kind === 'video') {
-              videoElement = pub.track.attach();
-              videoElement.style.display = 'none';
-              document.body.appendChild(videoElement);
-
-              const previewEl = pub.track.attach();
-              preview.srcObject = previewEl.srcObject;
-
-              vrBtn.disabled = false;
-              previewBtn.disabled = false;
+              attachVideoTrack(pub.track);
             }
           });
         });
@@ -293,8 +338,7 @@
         cameraR = new THREE.PerspectiveCamera(75, 0.5, 0.1, 1000);
       }
 
-      // VRモード開始
-      async function enterVR() {
+      async function enterVRLegacy() {
         if (!navigator.xr) {
           alert('WebXR is not supported on this device');
           return;
@@ -312,27 +356,185 @@
           });
 
           await renderer.xr.setSession(xrSession);
-          setStatus('Status: VR Mode Active<br>Use controllers to drive');
-
-          createStereoVideoMesh();
-          renderer.setAnimationLoop(renderVR);
-
           xrSession.addEventListener('end', () => {
+            vrMode = false;
+            vrModeType = null;
+            cleanupLayers();
             setStatus('Status: VR Mode Ended');
             renderer.setAnimationLoop(null);
             xrSession = null;
-            // 停止コマンド送信
             sendDrive(0, 0);
           });
+
+          vrMode = true;
+          vrModeType = 'legacy';
+          cleanupLayers();
+          setStatus('Status: VR Mode Active<br>Use controllers to drive');
+
+          if (!createStereoVideoMesh()) {
+            await xrSession.end();
+            setStatus('Status: Video not ready for VR');
+            return;
+          }
+          renderer.setAnimationLoop(renderVR);
 
         } catch (e) {
           setStatus('Status: Failed to enter VR - ' + e.message);
         }
       }
 
+      function cleanupLayers() {
+        xrReferenceSpace = null;
+        xrMediaBinding = null;
+        xrQuadLayer = null;
+        xrProjectionLayer = null;
+        xrGlContext = null;
+      }
+
+      function removeStereoMeshes() {
+        if (stereoMeshL) {
+          scene.remove(stereoMeshL);
+          stereoMeshL.geometry.dispose();
+          stereoMeshL.material.dispose();
+          stereoMeshL = null;
+        }
+        if (stereoMeshR) {
+          scene.remove(stereoMeshR);
+          stereoMeshR.geometry.dispose();
+          stereoMeshR.material.dispose();
+          stereoMeshR = null;
+        }
+        if (videoTexture) {
+          videoTexture.dispose();
+          videoTexture = null;
+        }
+      }
+
+      function cleanupLayers() {
+        xrReferenceSpace = null;
+        xrMediaBinding = null;
+        xrQuadLayer = null;
+        xrProjectionLayer = null;
+        xrGlContext = null;
+      }
+
+      async function enterVRStereoBeta() {
+        if (!navigator.xr) {
+          alert('WebXR is not supported on this device');
+          return;
+        }
+        if (typeof XRMediaBinding === 'undefined') {
+          alert('XRMediaBinding is not available in this browser');
+          return;
+        }
+        if (!videoElement) {
+          alert('Video stream not ready yet');
+          return;
+        }
+
+        const supported = await navigator.xr.isSessionSupported('immersive-vr');
+        if (!supported) {
+          alert('Immersive VR not supported on this device');
+          return;
+        }
+
+        try {
+          xrSession = await navigator.xr.requestSession('immersive-vr', {
+            optionalFeatures: ['local-floor', 'bounded-floor', 'layers']
+          });
+        } catch (e) {
+          setStatus('Status: Failed to enter VR - ' + e.message);
+          return;
+        }
+
+        renderer.setAnimationLoop(null);
+
+        try {
+          xrReferenceSpace = await xrSession.requestReferenceSpace('local-floor');
+        } catch (e) {
+          xrReferenceSpace = await xrSession.requestReferenceSpace('local');
+        }
+
+        xrMediaBinding = new XRMediaBinding(xrSession);
+        await videoElement.play().catch(() => {});
+        const readyForLayer = await waitForVideoReady(videoElement);
+        if (!readyForLayer) {
+          await xrSession.end();
+          setStatus('Status: Video not ready for XR layer');
+          return;
+        }
+
+        const width = videoElement.videoWidth || 3840;
+        const height = videoElement.videoHeight || 1080;
+        const safeWidth = width || 3840;
+        const safeHeight = height || 1080;
+        const eyeWidth = safeWidth / 2;
+        const quadWidth = 4;
+        const quadHeight = quadWidth * (safeHeight / eyeWidth);
+
+        try {
+          xrQuadLayer = xrMediaBinding.createQuadLayer(videoElement, {
+            space: xrReferenceSpace,
+            layout: 'stereo-left-right',
+            width: quadWidth,
+            height: quadHeight,
+            transform: new XRRigidTransform({ z: -3, y: 1.4 })
+          });
+        } catch (e) {
+          await xrSession.end();
+          setStatus('Status: Failed to create XR layer - ' + e.message);
+          return;
+        }
+
+        xrProjectionLayer = null;
+        xrGlContext = null;
+        if (typeof XRWebGLLayer !== 'undefined') {
+          try {
+            const glCanvas = document.createElement('canvas');
+            const gl = glCanvas.getContext('webgl', { alpha: true, antialias: false });
+            if (gl) {
+              if (gl.makeXRCompatible) {
+                await gl.makeXRCompatible();
+              }
+              xrGlContext = gl;
+              xrProjectionLayer = new XRWebGLLayer(xrSession, gl);
+            }
+          } catch (err) {
+            console.warn('Failed to create XRWebGLLayer', err);
+            xrProjectionLayer = null;
+            xrGlContext = null;
+          }
+        }
+
+        const activeLayers = xrProjectionLayer ? [xrProjectionLayer, xrQuadLayer] : [xrQuadLayer];
+        xrSession.updateRenderState({ layers: activeLayers });
+        vrMode = true;
+        vrModeType = 'layers';
+        setStatus('Status: VR Stereo Beta Active (Layers API)');
+
+        const onXRFrame = (time, frame) => {
+          if (!xrSession || vrModeType !== 'layers') return;
+          processControllerInput(xrSession);
+          xrSession.requestAnimationFrame(onXRFrame);
+        };
+        xrSession.requestAnimationFrame(onXRFrame);
+
+        xrSession.addEventListener('end', () => {
+          vrMode = false;
+          vrModeType = null;
+          cleanupLayers();
+          setStatus('Status: VR Mode Ended');
+          xrSession = null;
+          sendDrive(0, 0);
+        });
+
+      }
+
       // ステレオビデオメッシュ作成
       function createStereoVideoMesh() {
-        if (!videoElement) return;
+        if (!videoElement) return false;
+
+        removeStereoMeshes();
 
         videoTexture = new THREE.VideoTexture(videoElement);
         videoTexture.minFilter = THREE.LinearFilter;
@@ -382,17 +584,20 @@
           side: THREE.BackSide
         });
 
-        const meshL = new THREE.Mesh(geometry.clone(), materialL);
-        meshL.layers.set(1);
-        scene.add(meshL);
+        stereoMeshL = new THREE.Mesh(geometry.clone(), materialL);
+        stereoMeshL.layers.set(1);
+        scene.add(stereoMeshL);
 
-        const meshR = new THREE.Mesh(geometry.clone(), materialR);
-        meshR.layers.set(2);
-        scene.add(meshR);
+        stereoMeshR = new THREE.Mesh(geometry.clone(), materialR);
+        stereoMeshR.layers.set(2);
+        scene.add(stereoMeshR);
+
+        return true;
       }
 
       // コントローラー入力処理
-      function processControllerInput(session, frame) {
+      function processControllerInput(session) {
+        if (!session) return;
         const now = performance.now();
         if (now - lastSendTime < SEND_INTERVAL) return;
 
@@ -462,7 +667,7 @@
 
         // コントローラー入力処理
         if (session && mqttClient && mqttClient.connected) {
-          processControllerInput(session, frame);
+          processControllerInput(session);
         }
 
         const pose = frame.getViewerPose(renderer.xr.getReferenceSpace());
@@ -477,15 +682,15 @@
             const viewport = glLayer.getViewport(view);
             gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
 
-            const camera = view.eye === 'left' ? cameraL : cameraR;
-            camera.matrix.fromArray(view.transform.matrix);
-            camera.projectionMatrix.fromArray(view.projectionMatrix);
-            camera.matrixWorldNeedsUpdate = true;
+            const eyeCamera = view.eye === 'left' ? cameraL : cameraR;
+            eyeCamera.matrix.fromArray(view.transform.matrix);
+            eyeCamera.projectionMatrix.fromArray(view.projectionMatrix);
+            eyeCamera.matrixWorldNeedsUpdate = true;
 
-            camera.layers.enable(view.eye === 'left' ? 1 : 2);
-            camera.layers.disable(view.eye === 'left' ? 2 : 1);
+            eyeCamera.layers.enable(view.eye === 'left' ? 1 : 2);
+            eyeCamera.layers.disable(view.eye === 'left' ? 2 : 1);
 
-            renderer.render(scene, camera);
+            renderer.render(scene, eyeCamera);
           }
         }
 
@@ -598,7 +803,8 @@
 
       // イベントリスナー
       connectBtn.addEventListener('click', connect);
-      vrBtn.addEventListener('click', enterVR);
+      vrBtn.addEventListener('click', enterVRLegacy);
+      vrStereoBtn.addEventListener('click', enterVRStereoBeta);
       previewBtn.addEventListener('click', startPreview);
 
       // 初期化

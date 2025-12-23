@@ -1,0 +1,7 @@
+# Code Style & Conventions
+- Python scripts are standalone executables with shebangs, short docstrings up top, module-level ALL_CAPS config constants (URLs, tokens, dimensions), and synchronous/asynchronous loops (asyncio for LiveKit, callbacks for MQTT). Minimal type hints; emphasis on readability and logging rather than abstraction.
+- Picamera2 usage: helper `setup_camera` returning configured instances, frames converted via NumPy (RGB/BGR conversions) and aggregated into RGBA bytes for LiveKit. Keep frame processing step-by-step with explicit comments.
+- Network credentials/tokens are stored as inline strings during prototyping; highlight placeholders in documentation and keep `canSubscribe: true` in grants.
+- JavaScript viewers use vanilla DOM manipulation plus LiveKit JS, Three.js, WebXR, and mqtt.js. Structure uses top-level config constants, modular helper functions, and event handlers (e.g., `connectMqtt`, `handleXRFrame`). Inline CSS inside `<style>`.
+- Comments/documentation are primarily in Japanese; maintain bilingual clarity when modifying files.
+- Shell scripts rely on `rpicam-vid` + FFmpeg pipelines with low-latency flags; keep comments describing why specific flags are enabled (low latency, inline SPS/PPS, etc.).

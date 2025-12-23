@@ -1,0 +1,7 @@
+# Project Overview
+- Purpose: Prototype a fully remote VR driving demo where a Raspberry Pi 5 with dual cameras streams stereo video through LiveKit to VR/browser viewers while MQTT commands from VR controllers or keyboards steer a PiCar-X robot.
+- Core components: Raspberry Pi streaming scripts (`stream_livekit.py`, `stream_stereo_livekit.py`, `stream_whip.sh`), PiCar-X MQTT driver (`pi_picarx_mqtt.py`), VR/combined HTML viewers (`viewer.vr.html`, `viewer.combined.html`), EC2-hosted LiveKit+TURN+Mosquitto setup, and documentation (README, VR_IMPLEMENTATION_STATUS, docs/VR_STEREO_*).
+- Tech stack: Python 3 with LiveKit Python SDK, Picamera2, paho-mqtt; Bash/FFmpeg/rpicam tooling; front-end HTML/JS using LiveKit JS SDK, Three.js/WebXR, and mqtt.js; AWS EC2 infrastructure for LiveKit/TURN/Mosquitto.
+- Repo structure: flat scripts at root, docs under `docs/`, VR status doc at root. No complex package hierarchy; each script is an executable entrypoint.
+- External requirements: Raspberry Pi OS with camera support, Python virtualenv (`livekit-venv`), PiCar-X hardware, EC2 LiveKit server reachable at `relay.yuru-yuru.net`, MQTT broker at 3.112.216.187 (1883/9001).
+- Key architectural constraints: LiveKit tokens must set `canSubscribe: true`, TURN ports must stay open, stereoscopic video expects side-by-side frames and later VR stereo separation work tracked in docs.

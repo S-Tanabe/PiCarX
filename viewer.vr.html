@@ -86,7 +86,6 @@
     <div id="ui">
       <button id="connectBtn">Connect (LiveKit + MQTT)</button>
       <button id="vrBtn" disabled>Enter VR</button>
-      <button id="vrStereoBtn" disabled>Enter VR (Stereo Beta)</button>
       <button id="previewBtn" disabled>Preview Stereo (Non-VR)</button>
       <div id="status">Status: Disconnected</div>
       <div class="config">
@@ -120,7 +119,6 @@
 
       const connectBtn = document.getElementById('connectBtn');
       const vrBtn = document.getElementById('vrBtn');
-      const vrStereoBtn = document.getElementById('vrStereoBtn');
       const previewBtn = document.getElementById('previewBtn');
       const statusEl = document.getElementById('status');
       const preview = document.getElementById('preview');
@@ -136,7 +134,7 @@
       let previewMode = false;
       let mqttClient = null;
       let vrMode = false;
-      let vrModeType = null; // 'legacy' or 'layers'
+      let vrModeType = null; // 'layers'
       let xrReferenceSpace = null;
       let xrMediaBinding = null;
       let xrQuadLayer = null;
@@ -243,7 +241,6 @@
         preview.play().catch(() => {});
 
         vrBtn.disabled = false;
-        vrStereoBtn.disabled = false;
         previewBtn.disabled = false;
       }
 
@@ -280,7 +277,6 @@
         room.on(LivekitClient.RoomEvent.Disconnected, async () => {
           setStatus('Status: Disconnected');
           vrBtn.disabled = true;
-          vrStereoBtn.disabled = true;
           previewBtn.disabled = true;
           connectBtn.disabled = false;
           vrMode = false;
@@ -346,59 +342,6 @@
         cameraR = new THREE.PerspectiveCamera(75, 0.5, 0.1, 1000);
       }
 
-      async function enterVRLegacy() {
-        if (!navigator.xr) {
-          alert('WebXR is not supported on this device');
-          return;
-        }
-
-        const supported = await navigator.xr.isSessionSupported('immersive-vr');
-        if (!supported) {
-          alert('Immersive VR is not supported');
-          return;
-        }
-
-        try {
-          xrSession = await navigator.xr.requestSession('immersive-vr', {
-            optionalFeatures: ['local-floor', 'bounded-floor']
-          });
-
-          await renderer.xr.setSession(xrSession);
-          xrSession.addEventListener('end', () => {
-            vrMode = false;
-            vrModeType = null;
-            cleanupLayers();
-            setStatus('Status: VR Mode Ended');
-            renderer.setAnimationLoop(null);
-            xrSession = null;
-            sendDrive(0, 0);
-          });
-
-          vrMode = true;
-          vrModeType = 'legacy';
-          cleanupLayers();
-          setStatus('Status: VR Mode Active<br>Use controllers to drive');
-
-          if (!createStereoVideoMesh()) {
-            await xrSession.end();
-            setStatus('Status: Video not ready for VR');
-            return;
-          }
-          renderer.setAnimationLoop(renderVR);
-
-        } catch (e) {
-          setStatus('Status: Failed to enter VR - ' + e.message);
-        }
-      }
-
-      function cleanupLayers() {
-        xrReferenceSpace = null;
-        xrMediaBinding = null;
-        xrQuadLayer = null;
-        xrProjectionLayer = null;
-        xrGlContext = null;
-      }
-
       function removeStereoMeshes() {
         if (stereoMeshL) {
           scene.remove(stereoMeshL);
@@ -426,7 +369,7 @@
         xrGlContext = null;
       }
 
-      async function enterVRStereoBeta() {
+      async function enterVR() {
         if (!navigator.xr) {
           alert('WebXR is not supported on this device');
           return;
@@ -839,8 +782,7 @@
 
       // イベントリスナー
       connectBtn.addEventListener('click', connect);
-      vrBtn.addEventListener('click', enterVRLegacy);
-      vrStereoBtn.addEventListener('click', enterVRStereoBeta);
+      vrBtn.addEventListener('click', enterVR);
       previewBtn.addEventListener('click', startPreview);
 
       // 初期化

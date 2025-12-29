@@ -1,0 +1,9 @@
+{
+  "name": "Robot RTMP",
+  "input_type": "RTMP_INPUT",
+  "reusable": true,
+  "enable_transcoding": true,
+  "room_name": "vr-demo",
+  "participant_identity": "robot-rtmp",
+  "participant_name": "Robot (RTMP)"
+}

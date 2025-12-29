@@ -1,0 +1,14 @@
+{
+  "name": "lk-api",
+  "version": "1.0.0",
+  "description": "LiveKit API utility scripts",
+  "scripts": {
+    "admin-token": "node create-token-admin.js",
+    "viewer-token": "node create-token-viewer.js",
+    "publish-token": "node create-token-publish.js"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.2",
+    "livekit-server-sdk": "^2.14.0"
+  }
+}

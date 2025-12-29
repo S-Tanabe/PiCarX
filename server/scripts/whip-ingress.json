@@ -1,0 +1,9 @@
+{
+  "input_type": "WHIP_INPUT",
+  "room_name": "vr-demo",
+  "participant_identity": "robot-whip",
+  "participant_name": "Robot (WHIP)",
+  "reusable": true,
+  "video": {},
+  "audio": {}
+}

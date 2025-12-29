@@ -69,3 +69,10 @@ node_modules/
 
 # Serena (cache should be ignored, project.yml and memories are optional)
 .serena/cache/
+
+# Server secrets (use .example files as templates)
+server/.env
+server/livekit/livekit.yaml
+server/livekit/Caddyfile
+server/livekit/turn.crt
+server/livekit/turn.key

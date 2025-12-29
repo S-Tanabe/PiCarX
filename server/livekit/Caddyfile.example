@@ -1,0 +1,59 @@
+# YOUR_DOMAIN を実際のドメインに置き換えてください
+YOUR_DOMAIN {
+  encode zstd gzip
+
+  # Combined Viewer (操作UI)
+  @control path /control /control/
+  handle @control {
+    root * /opt/livekit/www
+    rewrite * /viewer.combined.html
+    file_server
+  }
+
+  # VR Viewer
+  @vr path /vr /vr/
+  handle @vr {
+    root * /opt/livekit/www
+    rewrite * /viewer.vr.html
+    file_server
+  }
+
+  # MQTT WebSocket プロキシ
+  @mqtt path /mqtt
+  handle @mqtt {
+    reverse_proxy 127.0.0.1:9001
+  }
+
+  # WHIP
+  @whip path /w/*
+  handle @whip {
+    reverse_proxy 127.0.0.1:8080
+  }
+
+  # TWIRP API
+  @twirp path /twirp/*
+  handle @twirp {
+    reverse_proxy 127.0.0.1:7880
+  }
+
+  # RTC WebSocket
+  @rtc path /rtc
+  handle @rtc {
+    reverse_proxy 127.0.0.1:7880
+  }
+
+  # その他 → LiveKit
+  handle {
+    reverse_proxy 127.0.0.1:7880 {
+      header_up Host {host}
+      header_up Upgrade {>Upgrade}
+      header_up Connection {>Connection}
+    }
+  }
+
+  log {
+    output stdout
+    format console
+    level INFO
+  }
+}

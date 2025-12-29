@@ -90,7 +90,7 @@
       <button id="previewBtn" disabled>Preview Stereo (Non-VR)</button>
       <div id="status">Status: Disconnected</div>
       <div class="config">
-        <label>MQTT URL: <input id="mqttUrl" value="ws://3.112.216.187:9001" /></label>
+        <label>MQTT URL: <input id="mqttUrl" value="wss://relay.yuru-yuru.net/mqtt" /></label>
         <label>Topic: <input id="topicBase" value="demo/picarx" /></label>
       </div>
     </div>
@@ -98,8 +98,8 @@
     <canvas id="canvas"></canvas>
     <div id="controlInfo">
       <strong>VR Controller:</strong><br>
-      Left Stick: Forward/Backward<br>
-      Right Stick: Left/Right<br>
+      Left Stick: Drive (Y: Forward/Back, X: Steer)<br>
+      Right Stick: Camera (X: Pan, Y: Tilt)<br>
       Any Trigger: Stop
     </div>
 
@@ -148,9 +148,12 @@
       // コントローラー状態
       let lastThrottle = 0;
       let lastSteer = 0;
+      let currentPan = 0;   // カメラパン角度 (-90~90)
+      let currentTilt = 0;  // カメラチルト角度 (-35~65)
       const DEADZONE = 0.15;
       const SEND_INTERVAL = 100; // ms
       let lastSendTime = 0;
+      let lastCameraSendTime = 0;
 
       function setStatus(msg) {
         statusEl.innerHTML = msg;
@@ -210,6 +213,11 @@
       // 走行コマンド送信
       function sendDrive(throttle, steer) {
         publishMqtt('cmd', { throttle, steer });
+      }
+
+      // カメラパン/チルト送信
+      function sendCamera(pan, tilt) {
+        publishMqtt('camera', { pan, tilt });
       }
 
       function attachVideoTrack(track) {
@@ -599,10 +607,11 @@
       function processControllerInput(session) {
         if (!session) return;
         const now = performance.now();
-        if (now - lastSendTime < SEND_INTERVAL) return;
 
         let throttle = 0;
         let steer = 0;
+        let panDelta = 0;
+        let tiltDelta = 0;
         let triggerPressed = false;
 
         // XR入力ソースからゲームパッド取得
@@ -614,21 +623,31 @@
           const buttons = gp.buttons;
 
           // Questコントローラー: axes[2]=X, axes[3]=Y (thumbstick)
-          // 左コントローラー: 前後（throttle）
-          // 右コントローラー: 左右（steer）
+          // 左コントローラー: 走行操作（throttle + steer）
           if (source.handedness === 'left' && axes.length >= 4) {
             // Y軸（前後）- 上が負、下が正なので反転
             const y = -axes[3];
             if (Math.abs(y) > DEADZONE) {
               throttle = y;
             }
-          }
-
-          if (source.handedness === 'right' && axes.length >= 4) {
-            // X軸（左右）
+            // X軸（左右）- ステアリング
             const x = axes[2];
             if (Math.abs(x) > DEADZONE) {
               steer = x;
+            }
+          }
+
+          // 右コントローラー: カメラ パン/チルト
+          if (source.handedness === 'right' && axes.length >= 4) {
+            // X軸 → パン（左右）
+            const x = axes[2];
+            if (Math.abs(x) > DEADZONE) {
+              panDelta = x * 3;  // 感度調整
+            }
+            // Y軸 → チルト（上下）- 上が負なので反転
+            const y = -axes[3];
+            if (Math.abs(y) > DEADZONE) {
+              tiltDelta = y * 2;  // 感度調整
             }
           }
 
@@ -644,18 +663,35 @@
           steer = 0;
         }
 
-        // 値が変化したか、定期送信
-        const changed = Math.abs(throttle - lastThrottle) > 0.05 ||
-                       Math.abs(steer - lastSteer) > 0.05;
+        // 走行コマンド送信
+        if (now - lastSendTime >= SEND_INTERVAL) {
+          const driveChanged = Math.abs(throttle - lastThrottle) > 0.05 ||
+                               Math.abs(steer - lastSteer) > 0.05;
 
-        if (changed || (throttle !== 0 || steer !== 0)) {
-          sendDrive(
-            Math.round(throttle * 100) / 100,
-            Math.round(steer * 100) / 100
-          );
-          lastThrottle = throttle;
-          lastSteer = steer;
-          lastSendTime = now;
+          if (driveChanged || (throttle !== 0 || steer !== 0)) {
+            sendDrive(
+              Math.round(throttle * 100) / 100,
+              Math.round(steer * 100) / 100
+            );
+            lastThrottle = throttle;
+            lastSteer = steer;
+            lastSendTime = now;
+          }
+        }
+
+        // カメラ パン/チルト送信
+        if (now - lastCameraSendTime >= SEND_INTERVAL) {
+          if (Math.abs(panDelta) > 0 || Math.abs(tiltDelta) > 0) {
+            // 現在値を更新（範囲制限付き）
+            currentPan = Math.max(-90, Math.min(90, currentPan + panDelta));
+            currentTilt = Math.max(-35, Math.min(65, currentTilt + tiltDelta));
+
+            sendCamera(
+              Math.round(currentPan),
+              Math.round(currentTilt)
+            );
+            lastCameraSendTime = now;
+          }
         }
       }
 

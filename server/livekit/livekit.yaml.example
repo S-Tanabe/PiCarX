@@ -1,0 +1,28 @@
+port: 7880
+log_level: info
+rtc:
+  tcp_port: 7881
+  use_external_ip: true
+  port_range_start: 50000
+  port_range_end: 60000
+  node_ip: YOUR_SERVER_IP  # サーバーのパブリックIPに置き換え
+  enable_loopback_candidate: false
+
+keys:
+  LK_API_KEY: YOUR_API_SECRET  # ランダムな秘密鍵に置き換え
+
+redis:
+  address: 127.0.0.1:6379
+
+ingress:
+  rtmp_base_url: rtmp://127.0.0.1:1935/x
+  whip_base_url: https://YOUR_DOMAIN/w  # ドメインに置き換え
+
+turn:
+  enabled: true
+  domain: YOUR_DOMAIN  # ドメインに置き換え
+  tls_port: 5349
+  udp_port: 3478
+  cert_file: /opt/livekit/turn.crt
+  key_file: /opt/livekit/turn.key
+  external_tls: true

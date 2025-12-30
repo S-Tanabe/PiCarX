@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-LiveKit Python SDK を使ったステレオ映像配信（Side-by-Side）+ VR音声受信
-2台のPi Camera V3からの映像を横並びで配信し、VRヘッドセットからの音声を受信・再生
+LiveKit Python SDK を使ったステレオ映像配信（Side-by-Side）+ 双方向音声
+2台のPi Camera V3からの映像を横並びで配信し、VRヘッドセットと双方向で音声通信
 """
 
 import asyncio
@@ -24,6 +24,11 @@ FPS = 30       # 負荷が高い場合は24に下げる
 # カメラID（左目=0, 右目=1）
 LEFT_CAM_ID = 0
 RIGHT_CAM_ID = 1
+
+# 音声設定
+AUDIO_SAMPLE_RATE = 48000
+AUDIO_CHANNELS = 1
+AUDIO_FRAME_SIZE = 480  # 10ms @ 48kHz
 # ==============================
 
 # 音声再生用（オプション）
@@ -37,7 +42,7 @@ except ImportError:
 
 
 class AudioPlayer:
-    """VRからの音声を再生するクラス"""
+    """VRからの音声を再生するクラス（低遅延設定）"""
     def __init__(self, sample_rate=48000, channels=1):
         self.sample_rate = sample_rate
         self.channels = channels
@@ -49,10 +54,12 @@ class AudioPlayer:
                 self.stream = sd.OutputStream(
                     samplerate=sample_rate,
                     channels=channels,
-                    dtype='int16'
+                    dtype='int16',
+                    latency='low',  # 低遅延モード
+                    blocksize=480,  # 10ms分のサンプル (48000Hz * 0.01)
                 )
                 self.stream.start()
-                print(f"[Audio] Output initialized: {sample_rate}Hz, {channels}ch")
+                print(f"[Audio] Output initialized: {sample_rate}Hz, {channels}ch (low latency)")
             except Exception as e:
                 print(f"[Audio] Output failed: {e}")
                 self.stream = None
@@ -76,6 +83,66 @@ class AudioPlayer:
             self.stream.stop()
             self.stream.close()
             print(f"[Audio] Closed (played {self.frame_count} frames)")
+
+
+class MicrophoneCapture:
+    """マイクから音声をキャプチャしてLiveKitに送信するクラス"""
+    def __init__(self, audio_source: rtc.AudioSource, sample_rate=48000, channels=1):
+        self.audio_source = audio_source
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.running = False
+        self.stream = None
+        self.frame_count = 0
+
+    def start(self):
+        if not AUDIO_AVAILABLE:
+            print("[Mic] sounddevice not available, microphone disabled")
+            return False
+
+        try:
+            self.running = True
+            self.stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype='int16',
+                blocksize=AUDIO_FRAME_SIZE,
+                latency='low',
+                callback=self._audio_callback
+            )
+            self.stream.start()
+            print(f"[Mic] Capture started: {self.sample_rate}Hz, {self.channels}ch")
+            return True
+        except Exception as e:
+            print(f"[Mic] Failed to start: {e}")
+            self.running = False
+            return False
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        if status:
+            print(f"[Mic] Status: {status}")
+        if self.running and self.audio_source:
+            try:
+                # int16 → AudioFrame
+                audio_data = indata.flatten().astype(np.int16)
+                audio_frame = rtc.AudioFrame(
+                    data=audio_data.tobytes(),
+                    sample_rate=self.sample_rate,
+                    num_channels=self.channels,
+                    samples_per_channel=len(audio_data) // self.channels,
+                )
+                self.audio_source.capture_frame(audio_frame)
+                self.frame_count += 1
+            except Exception as e:
+                if self.frame_count == 0:
+                    print(f"[Mic] Capture error: {e}")
+
+    def stop(self):
+        self.running = False
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+            print(f"[Mic] Stopped (captured {self.frame_count} frames)")
 
 
 def setup_camera(cam_id: int) -> Picamera2:
@@ -210,9 +277,22 @@ async def main():
     print(f"Published video track: {publication.sid}")
     print(f"Video encoding: 8 Mbps, {FPS} fps")
 
+    # 音声ソース作成とトラック公開
+    audio_source = rtc.AudioSource(AUDIO_SAMPLE_RATE, AUDIO_CHANNELS)
+    audio_track = rtc.LocalAudioTrack.create_audio_track("pi-microphone", audio_source)
+    audio_options = rtc.TrackPublishOptions(
+        source=rtc.TrackSource.SOURCE_MICROPHONE,
+    )
+    audio_publication = await room.local_participant.publish_track(audio_track, audio_options)
+    print(f"Published audio track: {audio_publication.sid}")
+
+    # マイクキャプチャ開始
+    mic_capture = MicrophoneCapture(audio_source, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS)
+    mic_capture.start()
+
     print("-" * 60)
-    print("Streaming stereo video... (Ctrl+C to stop)")
-    print("Waiting for VR audio...")
+    print("Streaming stereo video + audio... (Ctrl+C to stop)")
+    print("Bidirectional audio enabled")
     print("-" * 60)
 
     interval = 1.0 / FPS
@@ -269,7 +349,7 @@ async def main():
 
             frame_count += 1
             if frame_count % (FPS * 10) == 0:  # 10秒ごとにログ
-                print(f"[Video] Streamed {frame_count} frames | [Audio] Received {audio_frame_count} frames")
+                print(f"[Video] Streamed {frame_count} frames | [Mic] Sent {mic_capture.frame_count} frames | [Audio] Received {audio_frame_count} frames")
 
             # フレームレート維持
             elapsed = loop.time() - start
@@ -283,12 +363,13 @@ async def main():
         print("\nStopping...")
     finally:
         executor.shutdown(wait=False)
+        mic_capture.stop()
         cam_left.stop()
         cam_right.stop()
         if audio_player:
             audio_player.close()
         await room.disconnect()
-        print("Cameras stopped, disconnected from room")
+        print("Cameras and microphone stopped, disconnected from room")
 
 
 if __name__ == "__main__":

@@ -366,14 +366,27 @@
         return 20 * Math.log10(level);
       }
 
+      // dBスケールでメーター表示（-60dB〜0dBの範囲）
+      const DB_MIN = -60;
+      const DB_MAX = 0;
+
       function updateMeter(levelBar, levelText, level) {
-        const percent = Math.min(100, Math.max(0, level * 100));
-        levelBar.style.width = percent + '%';
         const db = levelToDb(level);
+        let percent;
+        if (db === -Infinity || db < DB_MIN) {
+          percent = 0;
+        } else if (db >= DB_MAX) {
+          percent = 100;
+        } else {
+          // -60dB〜0dBを0%〜100%にマッピング
+          percent = ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100;
+        }
+        levelBar.style.width = percent + '%';
+
         if (db === -Infinity) {
           levelText.textContent = '-∞ dB';
         } else {
-          levelText.textContent = db.toFixed(1) + ' dB';
+          levelText.textContent = db.toFixed(0) + ' dB';
         }
       }
 

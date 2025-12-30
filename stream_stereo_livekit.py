@@ -142,14 +142,16 @@ async def main():
     @room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
         nonlocal audio_task
-        print(f"[Track] Subscribed: {track.kind} from {participant.identity}")
+        print(f"[Track] Subscribed: kind={track.kind}, name={track.name}, sid={track.sid} from {participant.identity}")
+        print(f"[Track] KIND_AUDIO={rtc.TrackKind.KIND_AUDIO}, KIND_VIDEO={rtc.TrackKind.KIND_VIDEO}")
 
         if track.kind == rtc.TrackKind.KIND_AUDIO:
+            print(f"[Track] This is an AUDIO track, starting processing...")
             # 音声トラック受信 - 非同期タスクを起動
             audio_task = asyncio.create_task(process_audio_stream(track))
 
         elif track.kind == rtc.TrackKind.KIND_VIDEO:
-            print(f"[Track] Video from VR received (not displaying)")
+            print(f"[Track] This is a VIDEO track (not displaying)")
 
     @room.on("track_unsubscribed")
     def on_track_unsubscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):

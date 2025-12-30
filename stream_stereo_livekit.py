@@ -17,9 +17,9 @@ LIVEKIT_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbS
 
 # 各カメラの解像度（Side-by-Sideなので合計は WIDTH*2 x HEIGHT）
 # 低: 1280x720, 中: 1920x1080, 高: 2304x1296
-WIDTH = 1920   # 各目の幅
-HEIGHT = 1080  # 各目の高さ
-FPS = 30       # 負荷が高い場合は24に下げる
+WIDTH = 1280   # 各目の幅（負荷軽減のため720pに）
+HEIGHT = 720   # 各目の高さ
+FPS = 24       # 負荷軽減のため24fpsに
 
 # カメラID（左目=0, 右目=1）
 LEFT_CAM_ID = 0
@@ -42,7 +42,7 @@ except ImportError:
 
 
 class AudioPlayer:
-    """VRからの音声を再生するクラス（低遅延設定）"""
+    """VRからの音声を再生するクラス"""
     def __init__(self, sample_rate=48000, channels=1):
         self.sample_rate = sample_rate
         self.channels = channels
@@ -55,11 +55,11 @@ class AudioPlayer:
                     samplerate=sample_rate,
                     channels=channels,
                     dtype='int16',
-                    latency='low',  # 低遅延モード
-                    blocksize=480,  # 10ms分のサンプル (48000Hz * 0.01)
+                    latency=0.1,  # 100ms（安定性重視）
+                    blocksize=960,  # 20ms分のサンプル
                 )
                 self.stream.start()
-                print(f"[Audio] Output initialized: {sample_rate}Hz, {channels}ch (low latency)")
+                print(f"[Audio] Output initialized: {sample_rate}Hz, {channels}ch")
             except Exception as e:
                 print(f"[Audio] Output failed: {e}")
                 self.stream = None
@@ -144,10 +144,19 @@ class MicrophoneCapture:
         print("[Mic] Audio processing task started")
         while self.running:
             try:
+                # キューが溜まりすぎていたら古いフレームをスキップ
+                while self.queue.qsize() > 10:
+                    try:
+                        self.queue.get_nowait()
+                        self.dropped_frames = getattr(self, 'dropped_frames', 0) + 1
+                    except asyncio.QueueEmpty:
+                        break
+
                 # タイムアウト付きでキューから取得
                 try:
-                    audio_data = await asyncio.wait_for(self.queue.get(), timeout=0.1)
+                    audio_data = await asyncio.wait_for(self.queue.get(), timeout=0.02)
                 except asyncio.TimeoutError:
+                    await asyncio.sleep(0)  # 他のタスクに譲る
                     continue
 
                 # AudioFrame を作成して送信

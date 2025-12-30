@@ -559,30 +559,27 @@
 
         console.log('attachVideoTrack called', track.sid);
 
-        const hidden = track.attach();
-        hidden.style.position = 'fixed';
-        hidden.style.left = '-10000px';
-        hidden.style.top = '0px';
-        hidden.style.width = '2px';
-        hidden.style.height = '2px';
-        hidden.style.opacity = '0';
-        hidden.style.pointerEvents = 'none';
-        hidden.playsInline = true;
-        hidden.muted = true;
-        document.body.appendChild(hidden);
+        // 既存の preview 要素に直接アタッチ
+        track.attach(preview);
+        preview.muted = true;
+        preview.playsInline = true;
+        preview.autoplay = true;
 
-        const previewVideo = track.attach();
-        previewVideo.playsInline = true;
-        previewVideo.muted = true;
-        preview.srcObject = previewVideo.srcObject;
+        // VR用に別の非表示要素を作成
+        videoElement = track.attach();
+        videoElement.style.display = 'none';
+        videoElement.muted = true;
+        videoElement.playsInline = true;
+        document.body.appendChild(videoElement);
 
-        videoElement = hidden;
-        videoElement.play()
-          .then(() => console.log('Video playing'))
-          .catch(e => console.error('Video play error:', e));
+        // 再生開始
         preview.play()
-          .then(() => console.log('Preview playing'))
-          .catch(e => console.error('Preview play error:', e));
+          .then(() => console.log('Preview video playing'))
+          .catch(e => console.warn('Preview play error:', e));
+
+        videoElement.play()
+          .then(() => console.log('Hidden video playing'))
+          .catch(e => console.warn('Hidden video play error:', e));
 
         vrBtn.disabled = false;
         previewBtn.disabled = false;
@@ -638,6 +635,11 @@
           vrMode = false;
           vrModeType = null;
           cleanupLayers();
+          // トラック追跡をクリア
+          attachedVideoTracks.clear();
+          attachedAudioTracks.clear();
+          videoElement = null;
+          preview.srcObject = null;
           if (xrSession) {
             try {
               await xrSession.end();

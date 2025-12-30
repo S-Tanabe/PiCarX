@@ -211,6 +211,14 @@ async def main():
         while True:
             start = asyncio.get_event_loop().time()
 
+            # 10秒ごとに参加者とトラックの状態を確認
+            if frame_count % (FPS * 10) == 0 and frame_count > 0:
+                print(f"[Debug] Remote participants: {len(room.remote_participants)}")
+                for identity, participant in room.remote_participants.items():
+                    print(f"[Debug]   Participant: {identity}")
+                    for sid, pub in participant.track_publications.items():
+                        print(f"[Debug]     Track: sid={sid}, kind={pub.kind}, subscribed={pub.subscribed}")
+
             # 両カメラから同時にフレーム取得
             frame_left = cam_left.capture_array()   # RGB888
             frame_right = cam_right.capture_array() # RGB888

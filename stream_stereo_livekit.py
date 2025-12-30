@@ -119,16 +119,22 @@ async def main():
         """音声ストリームを処理する非同期タスク"""
         nonlocal audio_player, audio_frame_count
 
+        print(f"[Audio] Starting audio stream processing...")
+
         if AUDIO_AVAILABLE and audio_player is None:
             audio_player = AudioPlayer(sample_rate=48000, channels=1)
 
-        audio_stream = rtc.AudioStream(track)
-        async for frame_event in audio_stream:
-            audio_frame_count += 1
-            if audio_player:
-                audio_player.play(frame_event.frame.data.tobytes())
-            if audio_frame_count % 500 == 1:
-                print(f"[Audio] Received {audio_frame_count} frames")
+        try:
+            audio_stream = rtc.AudioStream(track)
+            print(f"[Audio] AudioStream created, waiting for frames...")
+            async for frame_event in audio_stream:
+                audio_frame_count += 1
+                if audio_player:
+                    audio_player.play(frame_event.frame.data.tobytes())
+                if audio_frame_count % 500 == 1:
+                    print(f"[Audio] Received {audio_frame_count} frames")
+        except Exception as e:
+            print(f"[Audio] Error in audio stream: {e}")
 
     # LiveKit接続
     room = rtc.Room()

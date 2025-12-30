@@ -86,23 +86,27 @@ class AudioPlayer:
 
 
 class MicrophoneCapture:
-    """マイクから音声をキャプチャしてLiveKitに送信するクラス"""
-    def __init__(self, audio_source: rtc.AudioSource, sample_rate=48000, channels=1, loop=None):
+    """マイクから音声をキャプチャしてLiveKitに送信するクラス（キューベース）"""
+    def __init__(self, audio_source: rtc.AudioSource, sample_rate=48000, channels=1):
         self.audio_source = audio_source
         self.sample_rate = sample_rate
         self.channels = channels
         self.running = False
         self.stream = None
         self.frame_count = 0
-        self.loop = loop  # asyncio event loop
+        self.queue = asyncio.Queue(maxsize=50)  # フレームキュー
+        self.task = None
 
-    def start(self):
+    async def start(self):
         if not AUDIO_AVAILABLE:
             print("[Mic] sounddevice not available, microphone disabled")
             return False
 
         try:
             self.running = True
+            # 音声処理タスクを開始
+            self.task = asyncio.create_task(self._process_audio())
+
             self.stream = sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=self.channels,
@@ -120,34 +124,55 @@ class MicrophoneCapture:
             return False
 
     def _audio_callback(self, indata, frames, time_info, status):
+        """sounddeviceのコールバック（同期）- キューにデータを追加"""
         if status:
             print(f"[Mic] Status: {status}")
-        if self.running and self.audio_source and self.loop:
+        if self.running:
             try:
-                # int16 → AudioFrame
-                audio_data = indata.flatten().astype(np.int16)
+                # データをコピーしてキューに追加（キューがいっぱいなら古いのを捨てる）
+                audio_data = indata.copy()
+                try:
+                    self.queue.put_nowait(audio_data)
+                except asyncio.QueueFull:
+                    pass  # キューがいっぱいなら破棄
+            except Exception as e:
+                if self.frame_count == 0:
+                    print(f"[Mic] Callback error: {e}")
+
+    async def _process_audio(self):
+        """キューから音声を取り出してLiveKitに送信（非同期）"""
+        print("[Mic] Audio processing task started")
+        while self.running:
+            try:
+                # タイムアウト付きでキューから取得
+                try:
+                    audio_data = await asyncio.wait_for(self.queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+
+                # AudioFrame を作成して送信
+                audio_data = audio_data.flatten().astype(np.int16)
                 audio_frame = rtc.AudioFrame(
                     data=audio_data.tobytes(),
                     sample_rate=self.sample_rate,
                     num_channels=self.channels,
                     samples_per_channel=len(audio_data) // self.channels,
                 )
-                # asyncio のイベントループでコルーチンを実行
-                asyncio.run_coroutine_threadsafe(
-                    self.audio_source.capture_frame(audio_frame),
-                    self.loop
-                )
+                await self.audio_source.capture_frame(audio_frame)
                 self.frame_count += 1
             except Exception as e:
                 if self.frame_count == 0:
-                    print(f"[Mic] Capture error: {e}")
+                    print(f"[Mic] Process error: {e}")
+        print("[Mic] Audio processing task ended")
 
     def stop(self):
         self.running = False
         if self.stream:
             self.stream.stop()
             self.stream.close()
-            print(f"[Mic] Stopped (captured {self.frame_count} frames)")
+        if self.task:
+            self.task.cancel()
+        print(f"[Mic] Stopped (captured {self.frame_count} frames)")
 
 
 def setup_camera(cam_id: int) -> Picamera2:
@@ -282,8 +307,8 @@ async def main():
     print(f"Published video track: {publication.sid}")
     print(f"Video encoding: 8 Mbps, {FPS} fps")
 
-    # イベントループを取得
-    loop = asyncio.get_event_loop()
+    # イベントループを取得（async関数内では get_running_loop を使用）
+    loop = asyncio.get_running_loop()
 
     # 音声ソース作成とトラック公開
     audio_source = rtc.AudioSource(AUDIO_SAMPLE_RATE, AUDIO_CHANNELS)
@@ -294,9 +319,9 @@ async def main():
     audio_publication = await room.local_participant.publish_track(audio_track, audio_options)
     print(f"Published audio track: {audio_publication.sid}")
 
-    # マイクキャプチャ開始（event loopを渡す）
-    mic_capture = MicrophoneCapture(audio_source, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, loop=loop)
-    mic_capture.start()
+    # マイクキャプチャ開始
+    mic_capture = MicrophoneCapture(audio_source, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS)
+    await mic_capture.start()
 
     print("-" * 60)
     print("Streaming stereo video + audio... (Ctrl+C to stop)")
@@ -315,6 +340,7 @@ async def main():
         frame_right = cam_right.capture_array()
         return frame_left, frame_right
 
+    print("[Video] Starting capture loop...")
     try:
         while True:
             start = loop.time()
@@ -331,6 +357,9 @@ async def main():
             frame_left, frame_right = await loop.run_in_executor(
                 executor, capture_frame_sync, cam_left, cam_right
             )
+
+            if frame_count == 0:
+                print(f"[Video] First frame captured: {frame_left.shape}")
 
             # BGR → RGB 変換（Picamera2はBGR順で出力する場合がある）
             frame_left = frame_left[:, :, ::-1]

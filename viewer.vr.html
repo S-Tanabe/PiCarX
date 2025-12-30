@@ -427,13 +427,47 @@
       }
 
       // ====== Attach Remote Audio ======
-      function attachRemoteAudioTrack(track) {
-        console.log('Attaching remote audio track');
+      const attachedAudioTracks = new Set();
+      function attachRemoteAudioTrack(track, participantIdentity) {
+        // 重複防止
+        if (attachedAudioTracks.has(track.sid)) {
+          console.log(`Audio track ${track.sid} already attached, skipping`);
+          return;
+        }
+        attachedAudioTracks.add(track.sid);
+
+        console.log(`Attaching remote audio track from ${participantIdentity}`);
         remoteAudioTrack = track;
+
+        // 新しいaudio要素を作成して追加
         const audioEl = track.attach();
-        audioEl.id = 'remoteAudioElement';
+        audioEl.id = 'remoteAudioElement-' + participantIdentity;
+        audioEl.autoplay = true;
+        audioEl.muted = false;
+        audioEl.volume = 1.0;
+        document.body.appendChild(audioEl);
+
+        // メインのremoteAudio要素にも接続
         remoteAudio.srcObject = audioEl.srcObject;
-        remoteAudio.play().catch(e => console.warn('Remote audio autoplay blocked:', e));
+        remoteAudio.muted = false;
+        remoteAudio.volume = 1.0;
+
+        // 再生試行
+        const playPromise = remoteAudio.play();
+        if (playPromise) {
+          playPromise
+            .then(() => console.log(`Remote audio playing from ${participantIdentity}`))
+            .catch(e => {
+              console.warn('Remote audio autoplay blocked:', e);
+              // ユーザー操作後に再生を再試行
+              document.addEventListener('click', function retryPlay() {
+                remoteAudio.play().then(() => {
+                  console.log('Remote audio resumed after user interaction');
+                }).catch(() => {});
+                document.removeEventListener('click', retryPlay);
+              }, { once: true });
+            });
+        }
 
         // Setup analyser after a short delay to ensure audio is playing
         setTimeout(() => {
@@ -446,6 +480,7 @@
               source.connect(remoteAnalyser);
               remoteAudioStatusDot.classList.add('active');
               startRemoteAudioMeter();
+              console.log('Remote audio analyser setup complete');
             } catch (e) {
               console.warn('Remote audio analyser error:', e);
             }
@@ -513,7 +548,17 @@
         publishMqtt('camera', { pan, tilt });
       }
 
+      const attachedVideoTracks = new Set();
       function attachVideoTrack(track) {
+        // 重複防止
+        if (attachedVideoTracks.has(track.sid)) {
+          console.log(`Video track ${track.sid} already attached, skipping`);
+          return;
+        }
+        attachedVideoTracks.add(track.sid);
+
+        console.log('attachVideoTrack called', track.sid);
+
         const hidden = track.attach();
         hidden.style.position = 'fixed';
         hidden.style.left = '-10000px';
@@ -532,11 +577,16 @@
         preview.srcObject = previewVideo.srcObject;
 
         videoElement = hidden;
-        videoElement.play().catch(() => {});
-        preview.play().catch(() => {});
+        videoElement.play()
+          .then(() => console.log('Video playing'))
+          .catch(e => console.error('Video play error:', e));
+        preview.play()
+          .then(() => console.log('Preview playing'))
+          .catch(e => console.error('Preview play error:', e));
 
         vrBtn.disabled = false;
         previewBtn.disabled = false;
+        console.log('Video track attached, buttons enabled');
       }
 
       async function waitForVideoReady(video, timeoutMs = 6000) {
@@ -568,7 +618,7 @@
           if (track.kind === 'video') {
             attachVideoTrack(track);
           } else if (track.kind === 'audio') {
-            attachRemoteAudioTrack(track);
+            attachRemoteAudioTrack(track, participant.identity);
           }
         });
 
@@ -611,7 +661,7 @@
               if (pub.track.kind === 'video') {
                 attachVideoTrack(pub.track);
               } else if (pub.track.kind === 'audio') {
-                attachRemoteAudioTrack(pub.track);
+                attachRemoteAudioTrack(pub.track, p.identity);
               }
             }
           });

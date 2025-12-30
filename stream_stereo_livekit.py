@@ -87,13 +87,14 @@ class AudioPlayer:
 
 class MicrophoneCapture:
     """マイクから音声をキャプチャしてLiveKitに送信するクラス"""
-    def __init__(self, audio_source: rtc.AudioSource, sample_rate=48000, channels=1):
+    def __init__(self, audio_source: rtc.AudioSource, sample_rate=48000, channels=1, loop=None):
         self.audio_source = audio_source
         self.sample_rate = sample_rate
         self.channels = channels
         self.running = False
         self.stream = None
         self.frame_count = 0
+        self.loop = loop  # asyncio event loop
 
     def start(self):
         if not AUDIO_AVAILABLE:
@@ -121,7 +122,7 @@ class MicrophoneCapture:
     def _audio_callback(self, indata, frames, time_info, status):
         if status:
             print(f"[Mic] Status: {status}")
-        if self.running and self.audio_source:
+        if self.running and self.audio_source and self.loop:
             try:
                 # int16 → AudioFrame
                 audio_data = indata.flatten().astype(np.int16)
@@ -131,7 +132,11 @@ class MicrophoneCapture:
                     num_channels=self.channels,
                     samples_per_channel=len(audio_data) // self.channels,
                 )
-                self.audio_source.capture_frame(audio_frame)
+                # asyncio のイベントループでコルーチンを実行
+                asyncio.run_coroutine_threadsafe(
+                    self.audio_source.capture_frame(audio_frame),
+                    self.loop
+                )
                 self.frame_count += 1
             except Exception as e:
                 if self.frame_count == 0:
@@ -277,6 +282,9 @@ async def main():
     print(f"Published video track: {publication.sid}")
     print(f"Video encoding: 8 Mbps, {FPS} fps")
 
+    # イベントループを取得
+    loop = asyncio.get_event_loop()
+
     # 音声ソース作成とトラック公開
     audio_source = rtc.AudioSource(AUDIO_SAMPLE_RATE, AUDIO_CHANNELS)
     audio_track = rtc.LocalAudioTrack.create_audio_track("pi-microphone", audio_source)
@@ -286,8 +294,8 @@ async def main():
     audio_publication = await room.local_participant.publish_track(audio_track, audio_options)
     print(f"Published audio track: {audio_publication.sid}")
 
-    # マイクキャプチャ開始
-    mic_capture = MicrophoneCapture(audio_source, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS)
+    # マイクキャプチャ開始（event loopを渡す）
+    mic_capture = MicrophoneCapture(audio_source, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, loop=loop)
     mic_capture.start()
 
     print("-" * 60)
@@ -297,7 +305,6 @@ async def main():
 
     interval = 1.0 / FPS
     frame_count = 0
-    loop = asyncio.get_event_loop()
 
     # カメラキャプチャ用のスレッドプールを作成
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)

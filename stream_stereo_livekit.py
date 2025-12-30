@@ -5,6 +5,7 @@ LiveKit Python SDK を使ったステレオ映像配信（Side-by-Side）+ VR音
 """
 
 import asyncio
+import concurrent.futures
 import numpy as np
 from livekit import rtc
 from picamera2 import Picamera2
@@ -115,26 +116,36 @@ async def main():
     audio_frame_count = 0
     audio_task = None
 
-    async def process_audio_stream(track: rtc.RemoteAudioTrack):
+    audio_streams = []  # AudioStreamを保持するリスト
+
+    async def process_audio_stream(track):
         """音声ストリームを処理する非同期タスク"""
         nonlocal audio_player, audio_frame_count
 
-        print(f"[Audio] Starting audio stream processing...")
+        print(f"[Audio] Starting audio stream processing for track: {track.sid}")
+        print(f"[Audio] Track type: {type(track)}")
 
         if AUDIO_AVAILABLE and audio_player is None:
             audio_player = AudioPlayer(sample_rate=48000, channels=1)
 
         try:
             audio_stream = rtc.AudioStream(track)
-            print(f"[Audio] AudioStream created, waiting for frames...")
+            audio_streams.append(audio_stream)  # 参照を保持
+            print(f"[Audio] AudioStream created: {audio_stream}")
+            print(f"[Audio] Waiting for frames...")
+
             async for frame_event in audio_stream:
                 audio_frame_count += 1
                 if audio_player:
                     audio_player.play(frame_event.frame.data.tobytes())
                 if audio_frame_count % 500 == 1:
                     print(f"[Audio] Received {audio_frame_count} frames")
+
+            print(f"[Audio] Audio stream ended")
         except Exception as e:
+            import traceback
             print(f"[Audio] Error in audio stream: {e}")
+            traceback.print_exc()
 
     # LiveKit接続
     room = rtc.Room()
@@ -206,10 +217,20 @@ async def main():
 
     interval = 1.0 / FPS
     frame_count = 0
+    loop = asyncio.get_event_loop()
+
+    # カメラキャプチャ用のスレッドプールを作成
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+    def capture_frame_sync(cam_left, cam_right):
+        """同期的にカメラからフレームを取得（別スレッドで実行）"""
+        frame_left = cam_left.capture_array()
+        frame_right = cam_right.capture_array()
+        return frame_left, frame_right
 
     try:
         while True:
-            start = asyncio.get_event_loop().time()
+            start = loop.time()
 
             # 10秒ごとに参加者とトラックの状態を確認
             if frame_count % (FPS * 10) == 0 and frame_count > 0:
@@ -219,9 +240,10 @@ async def main():
                     for sid, pub in participant.track_publications.items():
                         print(f"[Debug]     Track: sid={sid}, kind={pub.kind}, subscribed={pub.subscribed}")
 
-            # 両カメラから同時にフレーム取得
-            frame_left = cam_left.capture_array()   # RGB888
-            frame_right = cam_right.capture_array() # RGB888
+            # 両カメラから同時にフレーム取得（別スレッドで実行してイベントループをブロックしない）
+            frame_left, frame_right = await loop.run_in_executor(
+                executor, capture_frame_sync, cam_left, cam_right
+            )
 
             # BGR → RGB 変換（Picamera2はBGR順で出力する場合がある）
             frame_left = frame_left[:, :, ::-1]
@@ -250,13 +272,17 @@ async def main():
                 print(f"[Video] Streamed {frame_count} frames | [Audio] Received {audio_frame_count} frames")
 
             # フレームレート維持
-            elapsed = asyncio.get_event_loop().time() - start
+            elapsed = loop.time() - start
             if elapsed < interval:
                 await asyncio.sleep(interval - elapsed)
+            else:
+                # カメラ処理が遅い場合でも他のタスクに制御を渡す
+                await asyncio.sleep(0)
 
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
+        executor.shutdown(wait=False)
         cam_left.stop()
         cam_right.stop()
         if audio_player:

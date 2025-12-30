@@ -306,7 +306,7 @@
         }
       }
 
-      // LiveKit接続（Promise返却）
+      // LiveKit接続（Promise返却、タイムアウト付き）
       async function connectLiveKit() {
         if (!token || token === 'TOKEN_HERE') {
           throw new Error('視聴者トークンが未設定です');
@@ -328,7 +328,13 @@
           setStatus('disconnected');
         });
 
-        await room.connect(wsUrl, token);
+        // 接続にタイムアウトを設定（15秒）
+        const connectPromise = room.connect(wsUrl, token);
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('LiveKit接続がタイムアウトしました')), 15000)
+        );
+
+        await Promise.race([connectPromise, timeoutPromise]);
       }
 
       // MQTT接続（Promise返却）

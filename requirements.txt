@@ -1,0 +1,10 @@
+# PiCarX Stereo Streaming Dependencies
+# For Raspberry Pi 5
+
+livekit>=1.0.16  # AudioStream bug fixed in 1.0.16
+picamera2
+numpy
+sounddevice  # Optional: for audio playback
+
+# MQTT control (if using mqtt_control.py)
+paho-mqtt

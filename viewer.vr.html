@@ -556,7 +556,7 @@
         }
       }
 
-      // LiveKit接続
+      // LiveKit接続（タイムアウト付き）
       async function connectLiveKit() {
         room = new LivekitClient.Room({
           adaptiveStream: true,
@@ -596,7 +596,13 @@
           }
         });
 
-        await room.connect(wsUrl, token);
+        // 接続にタイムアウトを設定（15秒）
+        const connectPromise = room.connect(wsUrl, token);
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('LiveKit connection timeout')), 15000)
+        );
+
+        await Promise.race([connectPromise, timeoutPromise]);
 
         // 既存の参加者のトラックを購読
         room.remoteParticipants.forEach(p => {
@@ -1099,15 +1105,24 @@
 
         try {
           if (!cameraEnabled) {
-            // カメラをONにする
-            const stream = await navigator.mediaDevices.getUserMedia({
-              video: { width: 640, height: 480, facingMode: 'user' }
+            // カメラをONにする - LiveKit SDKのcreateLocalTracksを使用
+            const tracks = await LivekitClient.createLocalTracks({
+              audio: false,
+              video: {
+                resolution: { width: 640, height: 480 },
+                facingMode: 'user'
+              }
             });
-            const videoTrack = stream.getVideoTracks()[0];
-            localVideoTrack = new LivekitClient.LocalVideoTrack(videoTrack);
+            localVideoTrack = tracks.find(t => t.kind === 'video');
+
+            if (!localVideoTrack) {
+              throw new Error('Failed to create video track');
+            }
+
             await room.localParticipant.publishTrack(localVideoTrack);
 
             // ローカルプレビュー表示
+            const stream = new MediaStream([localVideoTrack.mediaStreamTrack]);
             localPreview.srcObject = stream;
             localPreview.style.display = 'block';
 

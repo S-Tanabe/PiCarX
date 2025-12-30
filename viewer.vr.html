@@ -80,6 +80,108 @@
         font-size: 12px;
         max-width: 300px;
       }
+      .media-controls {
+        display: flex;
+        gap: 8px;
+      }
+      .media-controls button {
+        padding: 10px 15px;
+        font-size: 14px;
+      }
+      .media-controls button.active {
+        background: #2ecc71;
+      }
+      .media-controls button.active:hover {
+        background: #27ae60;
+      }
+      #localPreview {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        width: 160px;
+        height: 120px;
+        background: #111;
+        border: 2px solid #4a90d9;
+        border-radius: 8px;
+        object-fit: cover;
+      }
+      /* Audio Mixer Panel */
+      #mixerPanel {
+        position: absolute;
+        bottom: 20px;
+        right: 350px;
+        background: rgba(20, 20, 30, 0.95);
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 15px;
+        min-width: 200px;
+      }
+      #mixerPanel h3 {
+        margin: 0 0 12px 0;
+        font-size: 14px;
+        color: #aaa;
+        border-bottom: 1px solid #333;
+        padding-bottom: 8px;
+      }
+      .mixer-channel {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 8px 0;
+        padding: 6px 0;
+      }
+      .mixer-channel .label {
+        width: 70px;
+        font-size: 11px;
+        color: #888;
+      }
+      .mixer-channel .meter-container {
+        flex: 1;
+        height: 12px;
+        background: #1a1a2a;
+        border-radius: 6px;
+        overflow: hidden;
+        position: relative;
+      }
+      .mixer-channel .meter-bar {
+        height: 100%;
+        width: 0%;
+        border-radius: 6px;
+        transition: width 0.05s ease-out;
+      }
+      .mixer-channel .meter-bar.input {
+        background: linear-gradient(90deg, #2ecc71 0%, #f1c40f 70%, #e74c3c 100%);
+      }
+      .mixer-channel .meter-bar.output {
+        background: linear-gradient(90deg, #3498db 0%, #9b59b6 70%, #e74c3c 100%);
+      }
+      .mixer-channel .level-text {
+        width: 45px;
+        font-size: 10px;
+        color: #666;
+        text-align: right;
+        font-family: monospace;
+      }
+      .mixer-section {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid #333;
+      }
+      .mixer-section-title {
+        font-size: 11px;
+        color: #666;
+        margin-bottom: 6px;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #555;
+      }
+      .status-dot.active {
+        background: #2ecc71;
+        box-shadow: 0 0 6px #2ecc71;
+      }
     </style>
   </head>
   <body>
@@ -87,6 +189,10 @@
       <button id="connectBtn">Connect (LiveKit + MQTT)</button>
       <button id="vrBtn" disabled>Enter VR</button>
       <button id="previewBtn" disabled>Preview Stereo (Non-VR)</button>
+      <div class="media-controls">
+        <button id="cameraBtn" disabled>Camera OFF</button>
+        <button id="micBtn" disabled>Mic OFF</button>
+      </div>
       <div id="status">Status: Disconnected</div>
       <div class="config">
         <label>MQTT URL: <input id="mqttUrl" value="wss://relay.yuru-yuru.net/mqtt" /></label>
@@ -94,7 +200,36 @@
       </div>
     </div>
     <video id="preview" autoplay playsinline muted></video>
+    <video id="localPreview" autoplay playsinline muted style="display:none;"></video>
+    <audio id="remoteAudio" autoplay></audio>
     <canvas id="canvas"></canvas>
+
+    <!-- Audio Mixer Panel -->
+    <div id="mixerPanel">
+      <h3>Audio Mixer</h3>
+      <div class="mixer-section">
+        <div class="mixer-section-title">Local (Input)</div>
+        <div class="mixer-channel">
+          <div class="status-dot" id="micStatusDot"></div>
+          <div class="label">Mic In</div>
+          <div class="meter-container">
+            <div class="meter-bar input" id="micLevelBar"></div>
+          </div>
+          <div class="level-text" id="micLevelText">-∞ dB</div>
+        </div>
+      </div>
+      <div class="mixer-section">
+        <div class="mixer-section-title">Remote (Output)</div>
+        <div class="mixer-channel">
+          <div class="status-dot" id="remoteAudioStatusDot"></div>
+          <div class="label">Audio Out</div>
+          <div class="meter-container">
+            <div class="meter-bar output" id="remoteAudioLevelBar"></div>
+          </div>
+          <div class="level-text" id="remoteAudioLevelText">-∞ dB</div>
+        </div>
+      </div>
+    </div>
     <div id="controlInfo">
       <strong>VR Controller:</strong><br>
       Left Stick: Drive (Y: Forward/Back, X: Steer)<br>
@@ -114,20 +249,43 @@
     <script>
       // ====== 設定 ======
       const wsUrl = 'wss://relay.yuru-yuru.net';
-      const token = 'eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5TdWJzY3JpYmUiOnRydWUsImNhblB1Ymxpc2giOmZhbHNlLCJjYW5QdWJsaXNoRGF0YSI6ZmFsc2V9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY5NjIwOTgyLCJuYmYiOjAsInN1YiI6InZpZXdlci1yeGU5NzkifQ.x5_H4GL7b_Q2eIm9du9WRHxUv-YP9GaH5ZPPnr2R-1o'; // 有効期限: 30日 (2026-01-29)
+      const token = 'eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5QdWJsaXNoIjp0cnVlLCJjYW5TdWJzY3JpYmUiOnRydWUsImNhblB1Ymxpc2hEYXRhIjp0cnVlfSwiaXNzIjoiTEtfQVBJX0tFWSIsImV4cCI6MTc2OTY5OTU3NywibmJmIjowLCJzdWIiOiJ2ci1oZWFkc2V0In0.-HZYX0BR6VAtwZLbsh0G6vwJOgyNEFNpNslLgV5OaMM'; // 双方向通信用 30日 (2026-01-30)
       // ==================
 
       const connectBtn = document.getElementById('connectBtn');
       const vrBtn = document.getElementById('vrBtn');
       const previewBtn = document.getElementById('previewBtn');
+      const cameraBtn = document.getElementById('cameraBtn');
+      const micBtn = document.getElementById('micBtn');
       const statusEl = document.getElementById('status');
       const preview = document.getElementById('preview');
+      const localPreview = document.getElementById('localPreview');
+      const remoteAudio = document.getElementById('remoteAudio');
       const canvas = document.getElementById('canvas');
       const mqttUrlEl = document.getElementById('mqttUrl');
       const topicBaseEl = document.getElementById('topicBase');
 
+      // Mixer elements
+      const micLevelBar = document.getElementById('micLevelBar');
+      const micLevelText = document.getElementById('micLevelText');
+      const micStatusDot = document.getElementById('micStatusDot');
+      const remoteAudioLevelBar = document.getElementById('remoteAudioLevelBar');
+      const remoteAudioLevelText = document.getElementById('remoteAudioLevelText');
+      const remoteAudioStatusDot = document.getElementById('remoteAudioStatusDot');
+
       let room = null;
+      let localVideoTrack = null;
+      let localAudioTrack = null;
+      let cameraEnabled = false;
+      let micEnabled = false;
       let videoElement = null;
+
+      // Audio analysis
+      let audioContext = null;
+      let micAnalyser = null;
+      let remoteAnalyser = null;
+      let micStream = null;
+      let remoteAudioTrack = null;
       let renderer, scene, cameraL, cameraR, camera;
       let xrSession = null;
       let videoTexture = null;
@@ -156,6 +314,130 @@
       function setStatus(msg) {
         statusEl.innerHTML = msg;
         console.log(msg.replace(/<br>/g, ' | '));
+      }
+
+      // ====== Audio Level Metering ======
+      function initAudioContext() {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        return audioContext;
+      }
+
+      function setupMicAnalyser(stream) {
+        const ctx = initAudioContext();
+        micAnalyser = ctx.createAnalyser();
+        micAnalyser.fftSize = 256;
+        const source = ctx.createMediaStreamSource(stream);
+        source.connect(micAnalyser);
+        micStream = stream;
+        micStatusDot.classList.add('active');
+        startMicMeter();
+      }
+
+      function setupRemoteAudioAnalyser(audioElement) {
+        const ctx = initAudioContext();
+        remoteAnalyser = ctx.createAnalyser();
+        remoteAnalyser.fftSize = 256;
+        try {
+          const source = ctx.createMediaElementSource(audioElement);
+          source.connect(remoteAnalyser);
+          remoteAnalyser.connect(ctx.destination);
+          remoteAudioStatusDot.classList.add('active');
+          startRemoteAudioMeter();
+        } catch (e) {
+          console.warn('Remote audio analyser setup failed:', e);
+        }
+      }
+
+      function getAudioLevel(analyser) {
+        if (!analyser) return 0;
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          sum += data[i];
+        }
+        return sum / data.length / 255; // 0-1
+      }
+
+      function levelToDb(level) {
+        if (level <= 0) return -Infinity;
+        return 20 * Math.log10(level);
+      }
+
+      function updateMeter(levelBar, levelText, level) {
+        const percent = Math.min(100, Math.max(0, level * 100));
+        levelBar.style.width = percent + '%';
+        const db = levelToDb(level);
+        if (db === -Infinity) {
+          levelText.textContent = '-∞ dB';
+        } else {
+          levelText.textContent = db.toFixed(1) + ' dB';
+        }
+      }
+
+      let micMeterInterval = null;
+      function startMicMeter() {
+        if (micMeterInterval) return;
+        micMeterInterval = setInterval(() => {
+          const level = getAudioLevel(micAnalyser);
+          updateMeter(micLevelBar, micLevelText, level);
+        }, 50);
+      }
+
+      function stopMicMeter() {
+        if (micMeterInterval) {
+          clearInterval(micMeterInterval);
+          micMeterInterval = null;
+        }
+        micStatusDot.classList.remove('active');
+        updateMeter(micLevelBar, micLevelText, 0);
+      }
+
+      let remoteMeterInterval = null;
+      function startRemoteAudioMeter() {
+        if (remoteMeterInterval) return;
+        remoteMeterInterval = setInterval(() => {
+          const level = getAudioLevel(remoteAnalyser);
+          updateMeter(remoteAudioLevelBar, remoteAudioLevelText, level);
+        }, 50);
+      }
+
+      function stopRemoteAudioMeter() {
+        if (remoteMeterInterval) {
+          clearInterval(remoteMeterInterval);
+          remoteMeterInterval = null;
+        }
+        remoteAudioStatusDot.classList.remove('active');
+        updateMeter(remoteAudioLevelBar, remoteAudioLevelText, 0);
+      }
+
+      // ====== Attach Remote Audio ======
+      function attachRemoteAudioTrack(track) {
+        console.log('Attaching remote audio track');
+        remoteAudioTrack = track;
+        const audioEl = track.attach();
+        audioEl.id = 'remoteAudioElement';
+        remoteAudio.srcObject = audioEl.srcObject;
+        remoteAudio.play().catch(e => console.warn('Remote audio autoplay blocked:', e));
+
+        // Setup analyser after a short delay to ensure audio is playing
+        setTimeout(() => {
+          if (remoteAudio.srcObject) {
+            try {
+              const ctx = initAudioContext();
+              remoteAnalyser = ctx.createAnalyser();
+              remoteAnalyser.fftSize = 256;
+              const source = ctx.createMediaStreamSource(remoteAudio.srcObject);
+              source.connect(remoteAnalyser);
+              remoteAudioStatusDot.classList.add('active');
+              startRemoteAudioMeter();
+            } catch (e) {
+              console.warn('Remote audio analyser error:', e);
+            }
+          }
+        }, 500);
       }
 
       // MQTT接続
@@ -268,9 +550,20 @@
           dynacast: true,
         });
 
-        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          console.log(`Track subscribed: ${track.kind} from ${participant.identity}`);
           if (track.kind === 'video') {
             attachVideoTrack(track);
+          } else if (track.kind === 'audio') {
+            attachRemoteAudioTrack(track);
+          }
+        });
+
+        room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+          console.log(`Track unsubscribed: ${track.kind} from ${participant.identity}`);
+          if (track.kind === 'audio') {
+            stopRemoteAudioMeter();
+            remoteAudioTrack = null;
           }
         });
 
@@ -295,8 +588,12 @@
         // 既存の参加者のトラックを購読
         room.remoteParticipants.forEach(p => {
           p.trackPublications.forEach(pub => {
-            if (pub.isSubscribed && pub.track && pub.track.kind === 'video') {
-              attachVideoTrack(pub.track);
+            if (pub.isSubscribed && pub.track) {
+              if (pub.track.kind === 'video') {
+                attachVideoTrack(pub.track);
+              } else if (pub.track.kind === 'audio') {
+                attachRemoteAudioTrack(pub.track);
+              }
             }
           });
         });
@@ -315,6 +612,9 @@
             connectMqtt()
           ]);
           setStatus(`Status: Connected<br>Room: ${roomName}<br>MQTT: OK`);
+          // カメラ・マイクボタンを有効化
+          cameraBtn.disabled = false;
+          micBtn.disabled = false;
         } catch (e) {
           setStatus('Status: Error - ' + e.message);
           connectBtn.disabled = false;
@@ -780,10 +1080,98 @@
         }
       });
 
+      // カメラ配信のON/OFF
+      async function toggleCamera() {
+        if (!room) return;
+
+        try {
+          if (!cameraEnabled) {
+            // カメラをONにする
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { width: 640, height: 480, facingMode: 'user' }
+            });
+            const videoTrack = stream.getVideoTracks()[0];
+            localVideoTrack = new LivekitClient.LocalVideoTrack(videoTrack);
+            await room.localParticipant.publishTrack(localVideoTrack);
+
+            // ローカルプレビュー表示
+            localPreview.srcObject = stream;
+            localPreview.style.display = 'block';
+
+            cameraEnabled = true;
+            cameraBtn.textContent = 'Camera ON';
+            cameraBtn.classList.add('active');
+            console.log('Camera published');
+          } else {
+            // カメラをOFFにする
+            if (localVideoTrack) {
+              await room.localParticipant.unpublishTrack(localVideoTrack);
+              localVideoTrack.stop();
+              localVideoTrack = null;
+            }
+            localPreview.srcObject = null;
+            localPreview.style.display = 'none';
+
+            cameraEnabled = false;
+            cameraBtn.textContent = 'Camera OFF';
+            cameraBtn.classList.remove('active');
+            console.log('Camera unpublished');
+          }
+        } catch (e) {
+          console.error('Camera toggle error:', e);
+          setStatus('Status: Camera error - ' + e.message);
+        }
+      }
+
+      // マイク配信のON/OFF
+      async function toggleMic() {
+        if (!room) return;
+
+        try {
+          if (!micEnabled) {
+            // マイクをONにする
+            const stream = await navigator.mediaDevices.getUserMedia({
+              audio: true
+            });
+            const audioTrack = stream.getAudioTracks()[0];
+            localAudioTrack = new LivekitClient.LocalAudioTrack(audioTrack);
+            await room.localParticipant.publishTrack(localAudioTrack);
+
+            // マイクレベルメーターをセットアップ
+            setupMicAnalyser(stream);
+
+            micEnabled = true;
+            micBtn.textContent = 'Mic ON';
+            micBtn.classList.add('active');
+            console.log('Mic published');
+          } else {
+            // マイクをOFFにする
+            if (localAudioTrack) {
+              await room.localParticipant.unpublishTrack(localAudioTrack);
+              localAudioTrack.stop();
+              localAudioTrack = null;
+            }
+
+            // マイクレベルメーターを停止
+            stopMicMeter();
+
+            micEnabled = false;
+            micBtn.textContent = 'Mic OFF';
+            micBtn.classList.remove('active');
+            console.log('Mic unpublished');
+          }
+        } catch (e) {
+          console.error('Mic toggle error:', e);
+          setStatus('Status: Mic error - ' + e.message);
+        }
+      }
+
       // イベントリスナー
       connectBtn.addEventListener('click', connect);
       vrBtn.addEventListener('click', enterVR);
       previewBtn.addEventListener('click', startPreview);
+      cameraBtn.addEventListener('click', toggleCamera);
+      micBtn.addEventListener('click', toggleMic);
 
       // 初期化
       initThreeJS();

@@ -12,7 +12,7 @@ from picamera2 import Picamera2
 # ============ 設定 ============
 LIVEKIT_URL = "wss://relay.yuru-yuru.net"
 # canPublish: true, canSubscribe: true のトークン
-LIVEKIT_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5QdWJsaXNoIjp0cnVlLCJjYW5TdWJzY3JpYmUiOnRydWV9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY4NjMwOTkyLCJuYmYiOjAsInN1YiI6InBpLWNhbWVyYS12MiJ9.P1JQ5XBNln9mB_rLAPM-F1NrVZMujcTuxAjqNfdTbx8"
+LIVEKIT_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ2aWRlbyI6eyJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6InZyLWRlbW8iLCJjYW5QdWJsaXNoIjp0cnVlLCJjYW5TdWJzY3JpYmUiOnRydWV9LCJpc3MiOiJMS19BUElfS0VZIiwiZXhwIjoxNzY5Njk5NzUzLCJuYmYiOjAsInN1YiI6InBpLWNhbWVyYS12MiJ9.LKRJt8FNFqwHF8PG1YocBZSzTUri4VVGomyfiV--0ZA"
 
 # 各カメラの解像度（Side-by-Sideなので合計は WIDTH*2 x HEIGHT）
 # 低: 1280x720, 中: 1920x1080, 高: 2304x1296

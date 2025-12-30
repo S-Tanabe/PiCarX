@@ -113,28 +113,34 @@ async def main():
     # 音声プレイヤー
     audio_player = None
     audio_frame_count = 0
+    audio_task = None
+
+    async def process_audio_stream(track: rtc.RemoteAudioTrack):
+        """音声ストリームを処理する非同期タスク"""
+        nonlocal audio_player, audio_frame_count
+
+        if AUDIO_AVAILABLE and audio_player is None:
+            audio_player = AudioPlayer(sample_rate=48000, channels=1)
+
+        audio_stream = rtc.AudioStream(track)
+        async for frame_event in audio_stream:
+            audio_frame_count += 1
+            if audio_player:
+                audio_player.play(frame_event.frame.data.tobytes())
+            if audio_frame_count % 500 == 1:
+                print(f"[Audio] Received {audio_frame_count} frames")
 
     # LiveKit接続
     room = rtc.Room()
 
     @room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
-        nonlocal audio_player, audio_frame_count
+        nonlocal audio_task
         print(f"[Track] Subscribed: {track.kind} from {participant.identity}")
 
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            # 音声トラック受信 - プレイヤーを初期化
-            if AUDIO_AVAILABLE and audio_player is None:
-                audio_player = AudioPlayer(sample_rate=48000, channels=1)
-
-            @track.on("frame_received")
-            def on_audio_frame(frame: rtc.AudioFrame):
-                nonlocal audio_frame_count
-                audio_frame_count += 1
-                if audio_player:
-                    audio_player.play(frame.data.tobytes())
-                if audio_frame_count % 500 == 1:
-                    print(f"[Audio] Received {audio_frame_count} frames")
+            # 音声トラック受信 - 非同期タスクを起動
+            audio_task = asyncio.create_task(process_audio_stream(track))
 
         elif track.kind == rtc.TrackKind.KIND_VIDEO:
             print(f"[Track] Video from VR received (not displaying)")

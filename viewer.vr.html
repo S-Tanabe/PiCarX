@@ -1129,15 +1129,21 @@
 
         try {
           if (!micEnabled) {
-            // マイクをONにする
-            const stream = await navigator.mediaDevices.getUserMedia({
-              audio: true
+            // マイクをONにする - LiveKit SDKのcreateLocalTracksを使用
+            const tracks = await LivekitClient.createLocalTracks({
+              audio: true,
+              video: false
             });
-            const audioTrack = stream.getAudioTracks()[0];
-            localAudioTrack = new LivekitClient.LocalAudioTrack(audioTrack);
+            localAudioTrack = tracks.find(t => t.kind === 'audio');
+
+            if (!localAudioTrack) {
+              throw new Error('Failed to create audio track');
+            }
+
             await room.localParticipant.publishTrack(localAudioTrack);
 
             // マイクレベルメーターをセットアップ
+            const stream = new MediaStream([localAudioTrack.mediaStreamTrack]);
             setupMicAnalyser(stream);
 
             micEnabled = true;
